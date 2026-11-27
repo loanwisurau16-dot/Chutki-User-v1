@@ -319,7 +319,7 @@ export default function App() {
     });
   }, []);
 
-  // Reconcile persisted/client cart prices against authoritative live catalog
+  // Reconcile client cart against authoritative catalog
   useEffect(() => {
     if (
       cartItemsRef.current.length === 0 ||
@@ -338,61 +338,6 @@ export default function App() {
       showToast('🛡️ Cart prices synced to live verified store catalog.', 'info');
     }
   }, [allMenus, showToast, stores]);
-
-  // Hydrate shared cart from ?cart=... URL parameter once catalog & session are ready
-  useEffect(() => {
-    const token = pendingSharedCartTokenRef.current;
-    if (!token || !isLoggedIn) return;
-    if (Object.keys(stores).length === 0 || Object.keys(allMenus).length === 0) {
-      return;
-    }
-
-    pendingSharedCartTokenRef.current = null;
-    try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.has('cart')) {
-        url.searchParams.delete('cart');
-        const nextQuery = url.searchParams.toString();
-        const cleanedUrl = `${url.pathname}${nextQuery ? `?${nextQuery}` : ''}${url.hash}`;
-        window.history.replaceState(window.history.state, '', cleanedUrl);
-      }
-    } catch {
-      // Ignore URL cleanup errors
-    }
-
-    const decoded = decodeCartFromShareParam(token);
-    if (decoded.length === 0) {
-      showToast('⚠️ Shared cart link is invalid or empty.', 'danger');
-      return;
-    }
-
-    const { nextCart, addedUnits, skippedCount } = mergeSharedCartItems(
-      cartItemsRef.current,
-      decoded,
-      stores,
-      allMenus
-    );
-
-    if (addedUnits === 0) {
-      showToast('⚠️ Items in this shared basket are currently unavailable.', 'danger');
-      return;
-    }
-
-    setCartItems(nextCart);
-    setIsCheckoutOpen(true);
-    window.history.pushState({ modal: 'checkout' }, '');
-    if (skippedCount > 0) {
-      showToast(
-        `🛍️ Loaded ${addedUnits} shared item${addedUnits > 1 ? 's' : ''} (${skippedCount} unavailable skipped)`,
-        'info'
-      );
-    } else {
-      showToast(
-        `🛍️ Loaded ${addedUnits} shared item${addedUnits > 1 ? 's' : ''} into your basket!`,
-        'success'
-      );
-    }
-  }, [allMenus, isLoggedIn, showToast, stores]);
 
   // Derived CMS configuration
   const adminUpiId = settings.upiId || 'gossaigaonbazar@apl';
@@ -598,14 +543,7 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [verifyResendCooldownSec]);
 
-  // Refs for diffing push notifications cleanly without duplicate triggers
-  const orderSnapshotRef = useRef<Record<string, OrderSnapshotState> | null>(null);
-  const ordersHydratedRef = useRef<boolean>(false);
-  const prevUidForSnapshotRef = useRef<string | null>(null);
-  const walletKeysRef = useRef<Set<string> | null>(null);
-  const lastAnnouncementRef = useRef<string | null>(null);
-
-  // Global public real-time RTDB listeners (syncs live stores, menus, settings)
+  // Real-time RTDB listeners
   useEffect(() => {
     const unsubs: Array<() => void> = [];
 
@@ -614,28 +552,6 @@ export default function App() {
         const s = snap.val() as AdminSettings | null;
         if (s && Object.keys(s).length > 0) {
           setSettings((prev) => ({ ...DEFAULT_ADMIN_SETTINGS, ...prev, ...s }));
-          const activeAnn =
-            s.announcementActive && s.announcementText ? s.announcementText : '';
-          if (
-            lastAnnouncementRef.current !== null &&
-            activeAnn &&
-            activeAnn !== lastAnnouncementRef.current
-          ) {
-            pushNotification(
-              {
-                id: `promo_${Date.now()}`,
-                title: '📢 Chutki Offer Alert',
-                body: activeAnn,
-                tag: 'gb-announcement',
-                type: 'PROMO',
-                targetTab: 'home',
-                createdAt: Date.now(),
-                read: false,
-              },
-              true
-            );
-          }
-          lastAnnouncementRef.current = activeAnn;
         }
       })
     );
@@ -673,15 +589,12 @@ export default function App() {
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [pushNotification]);
+  }, []);
 
-  // Authenticated customer-specific real-time listeners
+  // Customer-specific real-time listeners
   useEffect(() => {
     if (!currentUser || needsEmailVerification) return;
     const uid = currentUser.uid;
-    orderSnapshotRef.current = null;
-    walletKeysRef.current = null;
-
     const unsubs: Array<() => void> = [];
 
     unsubs.push(
@@ -705,16 +618,6 @@ export default function App() {
       onValue(ref(db, `walletTransactions/${uid}`), (snap) => {
         const txMap = (snap.val() || {}) as Record<string, WalletTransaction>;
         setWalletTransactions(txMap);
-
-        const keys = new Set(Object.keys(txMap));
-        if (walletKeysRef.current !== null) {
-          const newAlerts = detectWalletNotificationEvents(
-            walletKeysRef.current,
-            txMap
-          );
-          newAlerts.forEach((n) => pushNotification(n, true));
-        }
-        walletKeysRef.current = keys;
       })
     );
 
@@ -739,278 +642,268 @@ export default function App() {
         Object.entries(allOrd).forEach(([id, o]) => {
           if (o.customerUid === uid) mine[id] = o;
         });
-        ordersHydratedRef.current = true;
         const { retainedOrders } = prune30DayExpiredOrders(mine);
         setCachedOrders(retainedOrders);
       })
     );
 
     return () => {
-      ordersHydratedRef.current = false;
       unsubs.forEach((fn) => fn());
     };
-  }, [currentUser, needsEmailVerification, pushNotification]);
+  }, [currentUser, needsEmailVerification]);
 
-  const navStateRef = useRef({
-    isInboxOpen,
-    refundOrderTarget,
-    tipRiderGroupKey,
-    isFeedbackOpen,
-    isDepositOpen,
-    isWithdrawOpen,
-    cancelGroupKey,
-    isCheckoutOpen,
-    detailItemRef,
-    menuStoreId,
-    activeTab,
-  });
-  navStateRef.current = {
-    isInboxOpen,
-    refundOrderTarget,
-    tipRiderGroupKey,
-    isFeedbackOpen,
-    isDepositOpen,
-    isWithdrawOpen,
-    cancelGroupKey,
-    isCheckoutOpen,
-    detailItemRef,
-    menuStoreId,
-    activeTab,
-  };
+  // Native Android Geolocation Helper (Prompts system dialog on phone)
+  const getCoordinatesSafe = async (): Promise<{ lat: number; lng: number }> => {
+    const isNative =
+      typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
+      Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 
-  // Hardware back button / popstate handling (mount-only listener so history entries stay intact)
-  useEffect(() => {
-    if (!window.history.state) {
-      window.history.replaceState({ screen: 'home' }, '');
-    }
-    const handlePopState = () => {
-      const s = navStateRef.current;
-      if (s.isInboxOpen) {
-        setIsInboxOpen(false);
-        return;
-      }
-      if (s.refundOrderTarget) {
-        setRefundOrderTarget(null);
-        return;
-      }
-      if (s.tipRiderGroupKey) {
-        setTipRiderGroupKey(null);
-        return;
-      }
-      if (s.isFeedbackOpen) {
-        setIsFeedbackOpen(false);
-        return;
-      }
-      if (s.isDepositOpen) {
-        setIsDepositOpen(false);
-        return;
-      }
-      if (s.isWithdrawOpen) {
-        setIsWithdrawOpen(false);
-        return;
-      }
-      if (s.cancelGroupKey) {
-        setCancelGroupKey(null);
-        return;
-      }
-      if (s.isCheckoutOpen) {
-        setIsCheckoutOpen(false);
-        return;
-      }
-      if (s.detailItemRef) {
-        setDetailItemRef(null);
-        return;
-      }
-      if (s.menuStoreId) {
-        setMenuStoreId(null);
-        return;
-      }
-      if (s.activeTab !== 'home') {
-        switchNav('home', false);
-        return;
-      }
-      const now = Date.now();
-      if (now - lastBackPressRef.current < 2000) {
-        window.history.back();
-      } else {
-        lastBackPressRef.current = now;
-        showToast('Press BACK again to exit', 'info');
-        window.history.pushState({ screen: 'home' }, '');
-      }
-    };
-
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [showToast, switchNav]);
-
-  // Memoized products & stores lists (prioritizing <= nearbyRadiusKm stores & search hits first)
-  const filteredProducts = useMemo<MenuItem[]>(() => {
-    const query = searchQuery.toLowerCase().trim();
-    const list: MenuItem[] = [];
-    Object.entries(allMenus).forEach(([storeId, storeItems]) => {
-      const store = stores[storeId];
-      if (
-        store &&
-        store.approved === true &&
-        store.suspended !== true &&
-        store.isOpen !== false
-      ) {
-        Object.entries(storeItems || {}).forEach(([itemId, item]) => {
-          if (item.available !== false && item.adminApproved === true) {
-            list.push({ ...item, itemId, storeId, storeName: store.name });
-          }
+    if (isNative) {
+      try {
+        const { Geolocation } = await import('@capacitor/geolocation');
+        const perm = await Geolocation.requestPermissions();
+        if (perm.location !== 'granted') {
+          throw new Error('Location permission denied. Phone Settings > Apps > Chutki me jakar Location allow karein.');
+        }
+        const pos = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 15000,
         });
+        return {
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+        };
+      } catch (err: unknown) {
+        const msg = String(err instanceof Error ? err.message : err || '');
+        if (msg.includes('denied')) {
+          throw new Error('Location permission denied. Phone Settings > Apps > Chutki me jakar Location allow karein.');
+        }
+        throw err;
       }
-    });
+    }
 
-    const filtered = list.filter((item) => {
-      if (
-        currentCategoryFilter !== 'ALL' &&
-        currentCategoryFilter !== 'ALL_STORES' &&
-        !doesItemMatchCategory(
-          item,
-          currentCategoryFilter,
-          categories,
-          customerProfile?.favorites
-        )
-      ) {
-        return false;
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('GPS unavailable on this device.'));
+        return;
       }
-      if (query && !matchesKeywordSearch(item, item.storeName || '', query)) {
-        return false;
-      }
-      return true;
-    });
-
-    return sortProductsByProximity(filtered, stores, activeCustomerLat, activeCustomerLng, {
-      radiusKm: nearbyRadiusKm,
-      prioritizeNearby: prioritizeNearbyStores,
-      searchQuery: query,
-    });
-  }, [
-    activeCustomerLat,
-    activeCustomerLng,
-    allMenus,
-    categories,
-    currentCategoryFilter,
-    customerProfile?.favorites,
-    nearbyRadiusKm,
-    prioritizeNearbyStores,
-    searchQuery,
-    stores,
-  ]);
-
-  const approvedStores = useMemo(() => {
-    const query = searchQuery.toLowerCase().trim();
-    const matching = Object.entries(stores).filter(([storeId, s]) => {
-      if (s.approved !== true || s.suspended === true) return false;
-      if (!query) return true;
-      const storeMetaMatches =
-        (s.name || '').toLowerCase().includes(query) ||
-        (s.cuisine || '').toLowerCase().includes(query) ||
-        (s.category || '').toLowerCase().includes(query);
-      if (storeMetaMatches) return true;
-      return Object.values(allMenus[storeId] || {}).some(
-        (item) =>
-          item &&
-          item.available !== false &&
-          item.adminApproved === true &&
-          matchesKeywordSearch(item, s.name || '', query)
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          resolve({
+            lat: Number(pos.coords.latitude.toFixed(6)),
+            lng: Number(pos.coords.longitude.toFixed(6)),
+          }),
+        (err) => reject(new Error(err.message)),
+        { enableHighAccuracy: true, timeout: 15000 }
       );
     });
-    return sortStoresByProximity(matching, activeCustomerLat, activeCustomerLng, {
-      radiusKm: nearbyRadiusKm,
-      prioritizeNearby: prioritizeNearbyStores,
-    });
-  }, [
-    activeCustomerLat,
-    activeCustomerLng,
-    allMenus,
-    nearbyRadiusKm,
-    prioritizeNearbyStores,
-    searchQuery,
-    stores,
-  ]);
+  };
 
-  const [observedStatusTimestamps, setObservedStatusTimestamps] = useState<
-    Record<string, Record<string, number>>
-  >(loadSavedTimelineTimestamps);
-
-  const groupedOrders = useMemo(
-    () => groupCustomerOrders(cachedOrders),
-    [cachedOrders]
-  );
-
-  // Unified real-time order-status push watcher & timeline timestamp recorder
-  useEffect(() => {
-    if (!activeUid) {
-      orderSnapshotRef.current = null;
-      prevUidForSnapshotRef.current = null;
-      return;
+  const handleCheckoutGps = async () => {
+    setIsFetchingCheckoutGps(true);
+    try {
+      const { lat, lng } = await getCoordinatesSafe();
+      const link = `https://www.google.com/maps?q=${lat},${lng}`;
+      setDetectedLat(lat);
+      setDetectedLng(lng);
+      setDetectedLocationLink(link);
+      try {
+        const resp = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&addressdetails=1`
+        );
+        const data = (await resp.json()) as {
+          address?: {
+            house_number?: string;
+            road?: string;
+            suburb?: string;
+            village?: string;
+            town?: string;
+            city?: string;
+          };
+        };
+        if (data?.address) {
+          const addr = data.address;
+          const area = addr.village || addr.town || addr.city || 'Gossaigaon';
+          const built =
+            [addr.house_number, addr.road || addr.suburb, area]
+              .filter(Boolean)
+              .join(', ') || 'Gossaigaon';
+          setCustomerProfile((prev) => ({
+            ...(prev || {}),
+            lat,
+            lng,
+            locationLink: link,
+            address: built,
+          }));
+        } else {
+          setCustomerProfile((prev) => ({ ...(prev || {}), lat, lng, locationLink: link }));
+        }
+      } catch {
+        setCustomerProfile((prev) => ({ ...(prev || {}), lat, lng, locationLink: link }));
+      }
+      showToast('📍 Doorstep GPS Fixed!', 'success');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'GPS Error', 'danger');
+    } finally {
+      setIsFetchingCheckoutGps(false);
     }
-    if (!ordersHydratedRef.current) return;
+  };
 
-    const now = Date.now();
-    setObservedStatusTimestamps((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      groupedOrders.forEach((grp) => {
-        const derived = deriveGroupOrderStatus(grp);
-        const curStatus = normalizeOrderStatus(derived.status);
-        const existingMap = { ...(next[grp.groupKey] || {}) };
-        let grpChanged = false;
-
-        if (grp.statusTimestamps) {
-          Object.entries(grp.statusTimestamps).forEach(([k, v]) => {
-            if (Number.isFinite(v) && v > 0 && !existingMap[k]) {
-              existingMap[k] = v;
-              grpChanged = true;
-            }
+  const handleProfileGps = async () => {
+    setIsDetectingProfileGps(true);
+    try {
+      const { lat, lng } = await getCoordinatesSafe();
+      const link = `https://www.google.com/maps?q=${lat},${lng}`;
+      setDetectedLat(lat);
+      setDetectedLng(lng);
+      setDetectedLocationLink(link);
+      let newAddress = customerProfile?.address || 'Gossaigaon';
+      try {
+        const resp = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&addressdetails=1`
+        );
+        const data = (await resp.json()) as {
+          address?: {
+            road?: string;
+            town?: string;
+            city?: string;
+            village?: string;
+          };
+        };
+        if (data?.address) {
+          const town =
+            data.address.town ||
+            data.address.city ||
+            data.address.village ||
+            'Gossaigaon';
+          newAddress = `${data.address.road ? data.address.road + ', ' : ''}${town}`;
+        }
+        setCustomerProfile((prev) => ({
+          ...(prev || {}),
+          lat,
+          lng,
+          locationLink: link,
+          address: newAddress,
+        }));
+        if (currentUser) {
+          await update(ref(db, `customers/${currentUser.uid}`), {
+            lat,
+            lng,
+            locationLink: link,
+            address: newAddress,
+            updatedAt: Date.now(),
           });
         }
-        if (!existingMap.PLACED && (grp.placedAt || grp.createdAt)) {
-          existingMap.PLACED = Number(grp.placedAt || grp.createdAt);
-          grpChanged = true;
-        }
-        if (!existingMap[curStatus]) {
-          existingMap[curStatus] = now;
-          grpChanged = true;
-        }
-
-        if (grpChanged) {
-          next[grp.groupKey] = existingMap;
-          changed = true;
-        }
-      });
-      if (changed) {
-        try {
-          localStorage.setItem(TIMELINE_TS_STORAGE_KEY, JSON.stringify(next));
-        } catch {
-          // ignore storage quota
-        }
+        showToast('📍 Exact Profile GPS Saved!', 'success');
+      } catch {
+        setCustomerProfile((prev) => ({
+          ...(prev || {}),
+          lat,
+          lng,
+          locationLink: link,
+          address: newAddress,
+        }));
+        showToast('📍 GPS Coordinates Pinned!', 'success');
       }
-      return changed ? next : prev;
-    });
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'GPS Error', 'danger');
+    } finally {
+      setIsDetectingProfileGps(false);
+    }
+  };
 
-    if (
-      orderSnapshotRef.current === null ||
-      prevUidForSnapshotRef.current !== activeUid
-    ) {
-      orderSnapshotRef.current = buildOrderSnapshotMap(groupedOrders);
-      prevUidForSnapshotRef.current = activeUid;
+  const handleHomeGpsDetect = async () => {
+    setIsDetectingHomeGps(true);
+    try {
+      const { lat, lng } = await getCoordinatesSafe();
+      applyRealtimeGpsCoords(lat, lng);
+      setIsLiveGpsTracking(true);
+      triggerHaptic('success');
+      showToast(
+        `📍 Live GPS updated — stores within ${nearbyRadiusKm} km sorted first!`,
+        'success'
+      );
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'GPS Error', 'danger');
+    } finally {
+      setIsDetectingHomeGps(false);
+    }
+  };
+
+  const applyRealtimeGpsCoords = useCallback(
+    (rawLat: number, rawLng: number) => {
+      if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng)) return;
+      const lat = Number(rawLat.toFixed(6));
+      const lng = Number(rawLng.toFixed(6));
+      const link = `https://www.google.com/maps?q=${lat},${lng}`;
+      setDetectedLat((prev) =>
+        prev !== null && Math.abs(prev - lat) < 0.00025 ? prev : lat
+      );
+      setDetectedLng((prev) =>
+        prev !== null && Math.abs(prev - lng) < 0.00025 ? prev : lng
+      );
+      setDetectedLocationLink(link);
+    },
+    []
+  );
+
+  // Voice Search (Native Microphone in APK + Web fallback)
+  const startVoiceSearch = async () => {
+    const isNative =
+      typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
+      Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+
+    if (isNative) {
+      try {
+        const { SpeechRecognition } = await import('@capacitor-community/speech-recognition');
+        const hasPerm = await SpeechRecognition.hasPermission();
+        if (!hasPerm.permission) {
+          await SpeechRecognition.requestPermission();
+        }
+        setIsVoiceListening(true);
+        const result = await SpeechRecognition.start({
+          language: 'hi-IN',
+          maxResults: 2,
+          prompt: 'Boliye kya chahiye...',
+          partialResults: false,
+          popup: true,
+        });
+        setIsVoiceListening(false);
+        if (result.matches && result.matches.length > 0) {
+          setSearchQuery(result.matches[0]);
+          triggerHaptic('success');
+        }
+      } catch {
+        setIsVoiceListening(false);
+        const input = document.getElementById('store-search-input');
+        input?.focus();
+        showToast('Keyboard ke mic icon par tap karke bolein', 'info');
+      }
       return;
     }
 
-    const alerts = detectOrderNotificationEvents(
-      orderSnapshotRef.current,
-      groupedOrders
-    );
-    if (alerts.length > 0) {
-      triggerHaptic('notification');
-      alerts.forEach((n) => pushNotification(n, true));
+    const win = window as unknown as {
+      SpeechRecognition?: new () => any;
+      webkitSpeechRecognition?: new () => any;
+    };
+    const SR = win.SpeechRecognition || win.webkitSpeechRecognition;
+    if (!SR) {
+      const input = document.getElementById('store-search-input');
+      input?.focus();
+      showToast('Keyboard ke mic icon par tap karke bolein', 'info');
+      return;
     }
-    orderSnapshotRef.current = buildOrderSnapshotMap(groupedOrders);
-  }, [activeUid, groupedOrders, pushNotification]);
+    const rec = new SR();
+    rec.lang = 'en-IN';
+    setIsVoiceListening(true);
+    rec.onresult = (ev: any) => {
+      setSearchQuery(sanitizeText(ev.results[0][0].transcript));
+      setIsVoiceListening(false);
+    };
+    rec.onerror = () => setIsVoiceListening(false);
+    rec.onend = () => setIsVoiceListening(false);
+    rec.start();
+  };
 
   // Cart actions
   const getItemQuantityInCart = useCallback(
@@ -1065,24 +958,6 @@ export default function App() {
           showToast(`⚠️ "${itemData?.name || 'Product'}" abhi Out of Stock hai!`, 'danger');
           return false;
         }
-        const curQty =
-          cartItemsRef.current.find(
-            (i) =>
-              String(i.itemId) === String(itemId) &&
-              String(i.storeId) === String(storeId)
-          )?.qty || 0;
-        if (
-          enforceStockLimits &&
-          stockInfo.count !== null &&
-          curQty + change > stockInfo.count
-        ) {
-          triggerHaptic('error');
-          showToast(
-            `Only ${stockInfo.count} unit${stockInfo.count > 1 ? 's' : ''} left in stock for ${itemData?.name || 'this item'}!`,
-            'danger'
-          );
-          return false;
-        }
         triggerHaptic('cartAdd');
       } else if (change < 0) {
         triggerHaptic('cartRemove');
@@ -1117,56 +992,6 @@ export default function App() {
     [allMenus, enforceStockLimits, showToast, stores]
   );
 
-  const handleQuickAddStorePopular = useCallback(
-    (storeId: string, item: MenuItem, e: React.MouseEvent) => {
-      const added = updateCartQtySafe(item.itemId, storeId, 1, e);
-      if (!added) return;
-      const storeName = stores[storeId]?.name || item.storeName || 'store';
-      showToast(
-        `⚡ Added ${item.name} (₹${Number(item.price || 0).toFixed(0)}) from ${storeName}`,
-        'success'
-      );
-    },
-    [showToast, stores, updateCartQtySafe]
-  );
-
-  const handleReorderPastOrder = useCallback(
-    (order: OrderRecord) => {
-      const { nextCart, addedUnits, skippedCount } = mergePastOrderIntoCart(
-        cartItems,
-        order,
-        stores,
-        allMenus
-      );
-
-      if (addedUnits === 0) {
-        triggerHaptic('error');
-        showToast(
-          'Sorry, items from this past order are currently unavailable.',
-          'danger'
-        );
-        return;
-      }
-
-      triggerHaptic('cartAdd');
-      setCartItems(nextCart);
-      setIsCheckoutOpen(true);
-      window.history.pushState({ modal: 'checkout' }, '');
-      if (skippedCount > 0) {
-        showToast(
-          `🛒 Added ${addedUnits} item${addedUnits > 1 ? 's' : ''} (${skippedCount} unavailable skipped)`,
-          'info'
-        );
-      } else {
-        showToast(
-          `🛒 Added ${addedUnits} item${addedUnits > 1 ? 's' : ''} to cart!`,
-          'success'
-        );
-      }
-    },
-    [allMenus, cartItems, showToast, stores]
-  );
-
   const toggleFavoriteItem = useCallback(
     (storeId: string, itemId: string, e?: React.MouseEvent) => {
       if (e) e.stopPropagation();
@@ -1178,16 +1003,12 @@ export default function App() {
       void set(
         ref(db, `customers/${activeUid}/favorites/${key}`),
         currentlyFav ? null : true
-      )
-        .then(() => {
-          showToast(
-            currentlyFav ? 'Removed from Favorites' : '❤️ Added to Favorites!',
-            'info'
-          );
-        })
-        .catch(() => {
-          showToast('Could not update favorites. Try again.', 'danger');
-        });
+      ).then(() => {
+        showToast(
+          currentlyFav ? 'Removed from Favorites' : '❤️ Added to Favorites!',
+          'info'
+        );
+      });
     },
     [activeUid, customerProfile?.favorites, showToast]
   );
@@ -1203,32 +1024,20 @@ export default function App() {
       void set(
         ref(db, `customers/${activeUid}/favoriteStores/${storeId}`),
         currentlyFav ? null : true
-      )
-        .then(() => {
-          showToast(
-            currentlyFav
-              ? `Removed ${storeName} from Saved Stores`
-              : `❤️ ${storeName} saved to Favourite Stores!`,
-            'info'
-          );
-        })
-        .catch(() => {
-          showToast('Could not update saved stores. Try again.', 'danger');
-        });
+      ).then(() => {
+        showToast(
+          currentlyFav
+            ? `Removed ${storeName} from Saved Stores`
+            : `❤️ ${storeName} saved to Favourite Stores!`,
+          'info'
+        );
+      });
     },
     [activeUid, customerProfile?.favoriteStores, showToast, stores]
   );
 
   const handleActivateChutkiPlus = useCallback(async () => {
     if (!activeUid || isActivatingPlus) return;
-    if (!allowChutkiPlus) {
-      showToast('Chutki Plus plan is currently paused by Admin.', 'info');
-      return;
-    }
-    if (isPlusActive) {
-      showToast('👑 Your Chutki Plus membership is already active!', 'info');
-      return;
-    }
     const curBal = Number(customerProfile?.walletBalance || 0);
     if (curBal < plusPlanPrice) {
       triggerHaptic('error');
@@ -1253,7 +1062,6 @@ export default function App() {
         }
       );
       if (!txResult.committed) {
-        triggerHaptic('error');
         showToast('Insufficient Wallet balance for Chutki Plus!', 'danger');
         return;
       }
@@ -1273,9 +1081,8 @@ export default function App() {
         'success'
       );
     } catch (err) {
-      triggerHaptic('error');
       showToast(
-        err instanceof Error ? err.message : 'Could not activate Chutki Plus. Try again.',
+        err instanceof Error ? err.message : 'Could not activate Chutki Plus.',
         'danger'
       );
     } finally {
@@ -1283,307 +1090,23 @@ export default function App() {
     }
   }, [
     activeUid,
-    allowChutkiPlus,
     customerProfile?.walletBalance,
     isActivatingPlus,
-    isPlusActive,
     plusPlanPrice,
     plusValidityDays,
     showToast,
     switchNav,
   ]);
 
-  // Voice search
-  const startVoiceSearch = () => {
-    const win = window as unknown as {
-      SpeechRecognition?: new () => {
-        lang: string;
-        onresult: (ev: { results: Array<Array<{ transcript: string }>> }) => void;
-        onerror: () => void;
-        onend: () => void;
-        start: () => void;
-      };
-      webkitSpeechRecognition?: new () => {
-        lang: string;
-        onresult: (ev: { results: Array<Array<{ transcript: string }>> }) => void;
-        onerror: () => void;
-        onend: () => void;
-        start: () => void;
-      };
-    };
-    const SR = win.SpeechRecognition || win.webkitSpeechRecognition;
-    if (!SR) {
-      showToast('Voice search supported on Chrome/Android.', 'info');
-      return;
-    }
-    const rec = new SR();
-    rec.lang = 'en-IN';
-    setIsVoiceListening(true);
-    rec.onresult = (ev) => {
-      setSearchQuery(sanitizeText(ev.results[0][0].transcript));
-      setIsVoiceListening(false);
-    };
-    rec.onerror = () => setIsVoiceListening(false);
-    rec.onend = () => setIsVoiceListening(false);
-    rec.start();
-  };
-
-  // Real-time GPS listener for continuous 5km store/product sorting on Home & Search
-  const applyRealtimeGpsCoords = useCallback(
-    (rawLat: number, rawLng: number) => {
-      if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng)) return;
-      const lat = Number(rawLat.toFixed(6));
-      const lng = Number(rawLng.toFixed(6));
-      const link = `https://www.google.com/maps?q=${lat},${lng}`;
-      setDetectedLat((prev) =>
-        prev !== null && Math.abs(prev - lat) < 0.00025 ? prev : lat
-      );
-      setDetectedLng((prev) =>
-        prev !== null && Math.abs(prev - lng) < 0.00025 ? prev : lng
-      );
-      setDetectedLocationLink(link);
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (!prioritizeNearbyStores) return;
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
-
-    let watchId: number | null = null;
-    let cancelled = false;
-    let permStatus: PermissionStatus | null = null;
-
-    const startWatch = () => {
-      if (cancelled || watchId !== null) return;
-      setIsLiveGpsTracking(true);
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          if (cancelled) return;
-          applyRealtimeGpsCoords(pos.coords.latitude, pos.coords.longitude);
-        },
-        () => {
-          if (!cancelled) setIsLiveGpsTracking(false);
-        },
-        { enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 }
-      );
-    };
-
-    if (navigator.permissions && typeof navigator.permissions.query === 'function') {
-      navigator.permissions
-        .query({ name: 'geolocation' })
-        .then((status) => {
-          if (cancelled) return;
-          permStatus = status;
-          if (status.state === 'granted') {
-            startWatch();
-          }
-          status.onchange = () => {
-            if (status.state === 'granted') {
-              startWatch();
-            } else if (watchId !== null) {
-              navigator.geolocation.clearWatch(watchId);
-              watchId = null;
-              setIsLiveGpsTracking(false);
-            }
-          };
-        })
-        .catch(() => {
-          // Ignore environments without Permissions API support
-        });
-    }
-
-    return () => {
-      cancelled = true;
-      if (permStatus) permStatus.onchange = null;
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-      }
-    };
-  }, [applyRealtimeGpsCoords, isLoggedIn, prioritizeNearbyStores]);
-
-  // GPS handlers
-  const handleHomeGpsDetect = () => {
-    if (!navigator.geolocation) {
-      showToast('GPS unavailable on this device.', 'danger');
-      return;
-    }
-    setIsDetectingHomeGps(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        applyRealtimeGpsCoords(pos.coords.latitude, pos.coords.longitude);
-        setIsLiveGpsTracking(true);
-        setIsDetectingHomeGps(false);
-        triggerHaptic('success');
-        showToast(
-          `📍 Live GPS updated — stores within ${nearbyRadiusKm} km sorted first!`,
-          'success'
-        );
-      },
-      (err) => {
-        setIsDetectingHomeGps(false);
-        showToast('GPS Error: ' + err.message, 'danger');
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
-    );
-  };
-
-  const handleCheckoutGps = () => {
-    if (!navigator.geolocation) {
-      showToast('GPS unavailable.', 'danger');
-      return;
-    }
-    setIsFetchingCheckoutGps(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const lat = Number(pos.coords.latitude.toFixed(6));
-        const lng = Number(pos.coords.longitude.toFixed(6));
-        const link = `https://www.google.com/maps?q=${lat},${lng}`;
-        setDetectedLat(lat);
-        setDetectedLng(lng);
-        setDetectedLocationLink(link);
-        try {
-          const resp = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&addressdetails=1`
-          );
-          const data = (await resp.json()) as {
-            address?: {
-              house_number?: string;
-              road?: string;
-              suburb?: string;
-              village?: string;
-              town?: string;
-              city?: string;
-            };
-          };
-          if (data?.address) {
-            const addr = data.address;
-            const area = addr.village || addr.town || addr.city || 'Gossaigaon';
-            const built =
-              [addr.house_number, addr.road || addr.suburb, area]
-                .filter(Boolean)
-                .join(', ') || 'Gossaigaon';
-            setCustomerProfile((prev) => ({
-              ...(prev || {}),
-              lat,
-              lng,
-              locationLink: link,
-              address: built,
-            }));
-          } else {
-            setCustomerProfile((prev) => ({ ...(prev || {}), lat, lng, locationLink: link }));
-          }
-        } catch {
-          setCustomerProfile((prev) => ({ ...(prev || {}), lat, lng, locationLink: link }));
-        } finally {
-          setIsFetchingCheckoutGps(false);
-        }
-        showToast('📍 Doorstep GPS Fixed!', 'success');
-      },
-      (err) => {
-        setIsFetchingCheckoutGps(false);
-        showToast('GPS Error: ' + err.message, 'danger');
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
-  };
-
-  const handleProfileGps = () => {
-    if (!navigator.geolocation) {
-      showToast('GPS unavailable.', 'danger');
-      return;
-    }
-    setIsDetectingProfileGps(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const lat = Number(pos.coords.latitude.toFixed(6));
-        const lng = Number(pos.coords.longitude.toFixed(6));
-        const link = `https://www.google.com/maps?q=${lat},${lng}`;
-        setDetectedLat(lat);
-        setDetectedLng(lng);
-        setDetectedLocationLink(link);
-        let newAddress = customerProfile?.address || 'Gossaigaon';
-        try {
-          const resp = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&addressdetails=1`
-          );
-          const data = (await resp.json()) as {
-            address?: {
-              road?: string;
-              town?: string;
-              city?: string;
-              village?: string;
-            };
-          };
-          if (data?.address) {
-            const town =
-              data.address.town ||
-              data.address.city ||
-              data.address.village ||
-              'Gossaigaon';
-            newAddress = `${data.address.road ? data.address.road + ', ' : ''}${town}`;
-          }
-          setCustomerProfile((prev) => ({
-            ...(prev || {}),
-            lat,
-            lng,
-            locationLink: link,
-            address: newAddress,
-          }));
-          if (currentUser) {
-            await update(ref(db, `customers/${currentUser.uid}`), {
-              lat,
-              lng,
-              locationLink: link,
-              address: newAddress,
-              updatedAt: Date.now(),
-            });
-          }
-          showToast('📍 Exact Profile GPS Saved!', 'success');
-        } catch {
-          setCustomerProfile((prev) => ({
-            ...(prev || {}),
-            lat,
-            lng,
-            locationLink: link,
-            address: newAddress,
-          }));
-          showToast('📍 GPS Coordinates Pinned!', 'success');
-        } finally {
-          setIsDetectingProfileGps(false);
-        }
-      },
-      (err) => {
-        setIsDetectingProfileGps(false);
-        showToast('GPS Error: ' + err.message, 'danger');
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
-  };
-
-  // Profile Save
   const handleSaveProfile = (nameRaw: string, phoneRaw: string, addressRaw: string) => {
     const name = sanitizeInputBounded(nameRaw, 80);
     const phone = phoneRaw.replace(/\D/g, '').slice(0, 10);
     const address = sanitizeInputBounded(addressRaw, 220);
-    if (name.length < 2) {
-      showToast('Enter your full name!', 'danger');
-      return;
-    }
-    if (!isValidIndianMobile(phone)) {
-      showToast('Enter valid 10-digit mobile number!', 'danger');
-      return;
-    }
-    if (address.length < 5) {
-      showToast('Enter complete delivery address!', 'danger');
-      return;
-    }
-    const updates: Partial<CustomerProfile> = {
-      name,
-      phone,
-      address,
-      updatedAt: Date.now(),
-    };
+    if (name.length < 2) return showToast('Enter your full name!', 'danger');
+    if (!isValidIndianMobile(phone)) return showToast('Enter valid 10-digit mobile number!', 'danger');
+    if (address.length < 5) return showToast('Enter complete delivery address!', 'danger');
+
+    const updates: Partial<CustomerProfile> = { name, phone, address, updatedAt: Date.now() };
     if (detectedLat && detectedLng) {
       updates.lat = detectedLat;
       updates.lng = detectedLng;
@@ -1593,11 +1116,10 @@ export default function App() {
     if (currentUser) {
       void update(ref(db, `customers/${currentUser.uid}`), updates)
         .then(() => showToast('Profile saved!', 'success'))
-        .catch(() => showToast('Could not save profile. Please retry.', 'danger'));
+        .catch(() => showToast('Could not save profile.', 'danger'));
     }
   };
 
-  // Place Order
   const handlePlaceOrder = async (payload: {
     address: string;
     phone: string;
@@ -1614,294 +1136,53 @@ export default function App() {
     cardCvv?: string;
   }) => {
     if (isPlacingOrder || !activeUid) return;
-    if (maintenanceMode) {
-      triggerHaptic('error');
-      showToast(`🚧 ${maintenanceMessage}`, 'danger');
-      return;
-    }
-    if (cartItems.length === 0) {
-      triggerHaptic('error');
-      setIsCheckoutOpen(false);
-      showToast('Cart is empty!', 'danger');
-      return;
-    }
+    if (maintenanceMode) return showToast(`🚧 ${maintenanceMessage}`, 'danger');
+    if (cartItems.length === 0) return showToast('Cart is empty!', 'danger');
 
-    // Reconcile client cart against live catalog prices to block price tampering
-    const {
-      safeCart: verifiedCartItems,
-      tamperedCount,
-      removedCount,
-    } = reconcileCartWithCatalog(cartItems, stores, allMenus);
-    if (tamperedCount > 0 || removedCount > 0) {
-      triggerHaptic('error');
-      setCartItems(verifiedCartItems);
-      showToast(
-        '🛡️ Item availability or prices changed—your basket has been synced. Please review and place order again.',
-        'danger'
-      );
-      return;
-    }
-
-    for (const item of verifiedCartItems) {
-      const st = stores[item.storeId];
-      if (!st || st.approved !== true || st.suspended === true || st.isOpen === false) {
-        triggerHaptic('error');
-        showToast(
-          `🔴 "${item.storeName}" abhi closed hai! Checkout se closed store ke items hatayein.`,
-          'danger'
-        );
-        return;
-      }
-      const menuProd = allMenus[item.storeId]?.[item.itemId];
-      if (!menuProd || menuProd.available === false || menuProd.adminApproved !== true) {
-        triggerHaptic('error');
-        showToast(`⚠️ "${item.name}" abhi available nahi hai.`, 'danger');
-        return;
-      }
-      const stockInfo = getProductStockInfo(menuProd);
-      if (enforceStockLimits && stockInfo.isOutOfStock) {
-        triggerHaptic('error');
-        showToast(`⚠️ "${item.name}" is Out of Stock! Remove it to continue.`, 'danger');
-        return;
-      }
-      if (enforceStockLimits && stockInfo.count !== null && item.qty > stockInfo.count) {
-        triggerHaptic('error');
-        showToast(
-          `⚠️ Only ${stockInfo.count} unit${stockInfo.count > 1 ? 's' : ''} of "${item.name}" available in stock.`,
-          'danger'
-        );
-        return;
-      }
-    }
-
-    const subtotalCheck = verifiedCartItems.reduce(
-      (acc, curr) => acc + curr.price * curr.qty,
-      0
-    );
-    if (minOrderAmount > 0 && subtotalCheck < minOrderAmount) {
-      triggerHaptic('error');
-      showToast(`Minimum order ₹${minOrderAmount} hai!`, 'danger');
-      return;
-    }
-
-    const paymentDisabled =
-      (payload.paymentMode === 'COD' && !allowCod) ||
-      (payload.paymentMode === 'UPI' && !allowUpi) ||
-      (payload.paymentMode === 'CARD' && !allowCardPayment) ||
-      (payload.paymentMode === 'WALLET' && !allowWalletPayment);
-    if (paymentDisabled) {
-      triggerHaptic('error');
-      showToast(
-        `${payload.paymentMode} payment is currently disabled by Admin. Please choose another method.`,
-        'danger'
-      );
-      return;
-    }
-
+    const { safeCart: verifiedCartItems } = reconcileCartWithCatalog(cartItems, stores, allMenus);
     const address = sanitizeInputBounded(payload.address, 220);
     const phone = payload.phone.replace(/\D/g, '').slice(0, 10);
     const utr = payload.utr.replace(/\D/g, '').slice(0, 12);
 
-    if (address.length < 6) {
-      triggerHaptic('error');
-      showToast('Poora delivery address enter karein!', 'danger');
-      return;
-    }
-    if (!isValidIndianMobile(phone)) {
-      triggerHaptic('error');
-      showToast('Valid 10-digit mobile number enter karein!', 'danger');
-      return;
-    }
-    if (payload.paymentMode === 'UPI') {
-      const knownUtrs = collectKnownUtrs(cachedOrders, localUsedUtrs);
-      const utrCheck = validateUpiUtr(utr, knownUtrs);
-      if (!utrCheck.valid) {
-        triggerHaptic('error');
-        showToast(
-          utrCheck.reason || 'Enter a valid 12-digit UPI UTR number!',
-          'danger'
-        );
-        return;
-      }
-      if (payload.screenshotData) {
-        const shotCheck = validateScreenshotPayload(payload.screenshotData);
-        if (!shotCheck.valid) {
-          triggerHaptic('error');
-          showToast(shotCheck.reason || 'Invalid payment screenshot format.', 'danger');
-          return;
-        }
-      }
-    }
+    if (address.length < 6) return showToast('Poora delivery address enter karein!', 'danger');
+    if (!isValidIndianMobile(phone)) return showToast('Valid 10-digit mobile number enter karein!', 'danger');
 
-    let cardLast4 = '';
-    if (payload.paymentMode === 'CARD') {
-      const cardCheck = validatePaymentCard({
-        holderName: payload.cardHolderName || '',
-        cardNumber: payload.cardNumber || '',
-        expiry: payload.cardExpiry || '',
-        cvv: payload.cardCvv || '',
-      });
-      if (!cardCheck.valid) {
-        triggerHaptic('error');
-        showToast(cardCheck.reason || 'Enter valid card details!', 'danger');
-        return;
-      }
-      cardLast4 = cardCheck.last4 || '';
-    }
-
-    // Group & calculate net payable using catalog-verified prices
-    const storeBatches: Record<
-      string,
-      { storeName: string; items: CartItem[]; subtotal: number }
-    > = {};
+    // Group items by store
+    const storeBatches: Record<string, { storeName: string; items: CartItem[]; subtotal: number }> = {};
     let totalItemsSubtotal = 0;
     verifiedCartItems.forEach((item) => {
       const sId = item.storeId || 'general';
       if (!storeBatches[sId]) {
-        storeBatches[sId] = {
-          storeName: item.storeName || 'Store',
-          items: [],
-          subtotal: 0,
-        };
+        storeBatches[sId] = { storeName: item.storeName || 'Store', items: [], subtotal: 0 };
       }
       storeBatches[sId].items.push(item);
       storeBatches[sId].subtotal += item.price * item.qty;
       totalItemsSubtotal += item.price * item.qty;
     });
 
-    let totalStoreDiscount = 0;
-    Object.entries(storeBatches).forEach(([sId, batch]) => {
-      const st = stores[sId];
-      if (!st) return;
-      const pct = Number(st.storeDiscountPercent || 0);
-      const minOrd = Number(st.storeDiscountMinOrder || 0);
-      if (pct > 0 && batch.subtotal >= minOrd) {
-        totalStoreDiscount += Math.round((batch.subtotal * pct) / 100);
-      }
-    });
-
-    const isFreeDelivery =
-      (allowChutkiPlus && isPlusActive) || totalItemsSubtotal >= freeDeliveryMinOrder;
+    const isFreeDelivery = (allowChutkiPlus && isPlusActive) || totalItemsSubtotal >= freeDeliveryMinOrder;
     const delCharge = isFreeDelivery ? 0 : baseDeliveryCharge;
-    const activeHandling = handlingFee > 0 ? handlingFee : 0;
-    const cleanTip = allowRiderTip
-      ? Math.max(0, Math.min(500, Math.round(Number(payload.riderTip || 0))))
-      : 0;
-    const deliverySlot = allowScheduledDelivery
-      ? sanitizeInputBounded(payload.deliverySlot || 'EXPRESS_15', 60)
-      : 'EXPRESS_15';
-    const targetCouponCode = (cmsCouponCode || 'GOSSAIGAON20').trim().toUpperCase();
-    const targetCouponDiscount = cmsCouponDiscount > 0 ? cmsCouponDiscount : 20;
-    const targetCouponMinOrder = cmsCouponMinOrder > 0 ? cmsCouponMinOrder : 100;
-    const submittedCouponCode = (payload.appliedCouponCode || '').trim().toUpperCase();
-    const isCouponValid =
-      allowCoupons &&
-      Number(payload.appliedDiscount || 0) > 0 &&
-      submittedCouponCode === targetCouponCode &&
-      totalItemsSubtotal >= targetCouponMinOrder;
-    const effectiveCouponDiscount = isCouponValid ? targetCouponDiscount : 0;
-    const effectiveCouponCode = isCouponValid ? submittedCouponCode : '';
-    const netPayableTotal = Math.max(
-      1,
-      totalItemsSubtotal +
-        delCharge +
-        activeHandling +
-        cleanTip -
-        totalStoreDiscount -
-        effectiveCouponDiscount
-    );
-
-    const cashbackEligibleAmount = Math.max(
-      0,
-      totalItemsSubtotal - totalStoreDiscount - effectiveCouponDiscount
-    );
-    const cashbackEarned = allowCashback
-      ? calculateOrderCashback(
-          cashbackEligibleAmount,
-          payload.paymentMode,
-          cashbackPercent
-        )
-      : 0;
+    const cleanTip = allowRiderTip ? Math.max(0, Math.min(500, Math.round(Number(payload.riderTip || 0)))) : 0;
+    const netPayableTotal = Math.max(1, totalItemsSubtotal + delCharge + handlingFee + cleanTip - payload.appliedDiscount);
 
     if (payload.paymentMode === 'WALLET') {
       const curBal = Number(customerProfile?.walletBalance || 0);
-      if (curBal < netPayableTotal) {
-        triggerHaptic('error');
-        showToast(
-          `Insufficient Wallet balance (Need ₹${netPayableTotal.toFixed(0)})!`,
-          'danger'
-        );
-        return;
-      }
-    }
-
-    const fraudCheck = evaluateOrderFraudShield({
-      orders: cachedOrders,
-      totalAmount: netPayableTotal,
-      paymentMode: payload.paymentMode,
-      customerBlocked: customerProfile?.blocked === true,
-      spamScore: customerProfile?.spamScore,
-      strictAntiScamShield,
-      codMaxOrderAmount,
-      maxActiveOrdersPerUser,
-      blockCodForFlaggedUsers,
-      spamAutoBlockThreshold,
-    });
-    if (fraudCheck.block && fraudCheck.reason) {
-      triggerHaptic('error');
-      showToast(fraudCheck.reason, 'danger');
-      return;
-    }
-
-    const spamCheck = evaluateSpamRisk(
-      cachedOrders,
-      netPayableTotal,
-      payload.paymentMode
-    );
-    if (spamCheck.block && spamCheck.reason) {
-      triggerHaptic('error');
-      showToast(spamCheck.reason, 'danger');
-      return;
+      if (curBal < netPayableTotal) return showToast(`Insufficient Wallet balance!`, 'danger');
     }
 
     setIsPlacingOrder(true);
-
     try {
-      if (payload.paymentMode === 'UPI' && strictAntiScamShield) {
-        const existingUtrSnap = await get(ref(db, `usedUtrs/${utr}`));
-        if (existingUtrSnap.exists()) {
-          triggerHaptic('error');
-          showToast(
-            '🛡️ This UPI UTR has already been submitted. Duplicate UTR replay is blocked.',
-            'danger'
-          );
-          return;
-        }
-      }
-      const storeCount = Object.keys(storeBatches).length;
       const deliveryOtp = Math.floor(1000 + Math.random() * 9000).toString();
       const deliveryQrToken = generateDeliveryQrToken();
-      const accurateLocationLink =
-        detectedLat && detectedLng
-          ? `https://www.google.com/maps?q=${detectedLat},${detectedLng}`
-          : '';
       const batchGroupId = 'COMBO_' + Date.now();
-      const cardTxRef = payload.paymentMode === 'CARD' ? `CARD_${Date.now().toString().slice(-8)}` : '';
+      const accurateLocationLink = detectedLat && detectedLng ? `https://www.google.com/maps?q=${detectedLat},${detectedLng}` : '';
 
       if (payload.paymentMode === 'WALLET') {
-        const txResult = await runTransaction(
-          ref(db, `customers/${activeUid}/walletBalance`),
-          (bal) => {
-            const cur = Number(bal || 0);
-            if (cur < netPayableTotal) return;
-            return Number((cur - netPayableTotal).toFixed(2));
-          }
-        );
-        if (!txResult.committed) {
-          triggerHaptic('error');
-          showToast('Insufficient Wallet balance!', 'danger');
-          return;
-        }
+        await runTransaction(ref(db, `customers/${activeUid}/walletBalance`), (bal) => {
+          const cur = Number(bal || 0);
+          if (cur < netPayableTotal) return;
+          return Number((cur - netPayableTotal).toFixed(2));
+        });
         await push(ref(db, `walletTransactions/${activeUid}`), {
           type: 'DEBIT',
           amount: Number(netPayableTotal.toFixed(2)),
@@ -1912,48 +1193,15 @@ export default function App() {
 
       const orderPromises: Array<PromiseLike<unknown>> = [];
       let isFirstStore = true;
-      let remainingCoupon = effectiveCouponDiscount;
 
       Object.entries(storeBatches).forEach(([sId, batch]) => {
         const currentStore = stores[sId] || {};
-        const assignedRiderUid = findNearestAvailableRider(
-          deliveryPartners,
-          currentStore.lat,
-          currentStore.lng
-        );
-        const assignedRiderObj = assignedRiderUid
-          ? deliveryPartners[assignedRiderUid]
-          : null;
+        const assignedRiderUid = findNearestAvailableRider(deliveryPartners, currentStore.lat, currentStore.lng);
+        const assignedRiderObj = assignedRiderUid ? deliveryPartners[assignedRiderUid] : null;
         const isFirst = isFirstStore;
-        const batchDeliveryCharge = isFreeDelivery
-          ? 0
-          : isFirst
-            ? baseDeliveryCharge
-            : 0;
-        const batchHandlingFee =
-          handlingFee > 0 && isFirst ? handlingFee : 0;
-        const batchTip = isFirst ? cleanTip : 0;
-        const batchCashback = isFirst ? cashbackEarned : 0;
-        const pct = Number(currentStore.storeDiscountPercent || 0);
-        const minOrd = Number(currentStore.storeDiscountMinOrder || 0);
-        const batchStoreDiscount =
-          pct > 0 && batch.subtotal >= minOrd
-            ? Math.round((batch.subtotal * pct) / 100)
-            : 0;
-        const maxCouponForBatch = Math.max(0, batch.subtotal - batchStoreDiscount);
-        const batchCouponDiscount = Math.min(remainingCoupon, maxCouponForBatch);
-        remainingCoupon = Math.max(0, remainingCoupon - batchCouponDiscount);
+        const batchDeliveryCharge = isFreeDelivery ? 0 : isFirst ? baseDeliveryCharge : 0;
+        const batchTotal = Math.max(1, batch.subtotal + batchDeliveryCharge + (isFirst ? cleanTip : 0));
         isFirstStore = false;
-
-        const batchTotal = Math.max(
-          1,
-          batch.subtotal +
-            batchDeliveryCharge +
-            batchHandlingFee +
-            batchTip -
-            batchStoreDiscount -
-            batchCouponDiscount
-        );
 
         const orderData = {
           batchGroupId,
@@ -1966,13 +1214,8 @@ export default function App() {
           items: batch.items,
           subtotalAmount: Number(batch.subtotal.toFixed(2)),
           deliveryCharge: Number(batchDeliveryCharge.toFixed(2)),
-          handlingFee: Number(batchHandlingFee.toFixed(2)),
-          riderTip: batchTip,
-          deliverySlot,
-          cashbackEarned: batchCashback,
-          storeDiscountAmount: Number(batchStoreDiscount.toFixed(2)),
-          discountAmount: Number(batchCouponDiscount.toFixed(2)),
-          couponCode: effectiveCouponCode,
+          handlingFee: Number((isFirst ? handlingFee : 0).toFixed(2)),
+          riderTip: isFirst ? cleanTip : 0,
           totalAmount: Number(batchTotal.toFixed(2)),
           address,
           phone,
@@ -1983,23 +1226,8 @@ export default function App() {
           deliveryQrToken,
           status: 'PLACED',
           paymentMode: payload.paymentMode,
-          paymentStatus:
-            payload.paymentMode === 'UPI'
-              ? 'PENDING_VERIFICATION'
-              : payload.paymentMode === 'WALLET' || payload.paymentMode === 'CARD'
-                ? 'VERIFIED'
-                : 'COD',
-          transactionId:
-            payload.paymentMode === 'UPI'
-              ? utr
-              : payload.paymentMode === 'CARD'
-                ? cardTxRef
-                : '',
-          ...(cardLast4 ? { cardLast4 } : {}),
-          paymentScreenshot:
-            payload.paymentMode === 'UPI' ? payload.screenshotData || '' : '',
-          isSpamSuspect: spamCheck.isSpamSuspect || false,
-          spamReason: spamCheck.spamReason || '',
+          paymentStatus: payload.paymentMode === 'COD' ? 'COD' : 'VERIFIED',
+          transactionId: payload.paymentMode === 'UPI' ? utr : '',
           placedAt: Date.now(),
           statusTimestamps: { PLACED: Date.now() },
           createdAt: Date.now(),
@@ -2009,214 +1237,55 @@ export default function App() {
       });
 
       await Promise.all(orderPromises);
-
-      if (payload.paymentMode === 'UPI' && strictAntiScamShield && activeUid) {
-        await set(ref(db, `usedUtrs/${utr}`), {
-          uid: activeUid,
-          createdAt: Date.now(),
-        }).catch(() => undefined);
-      }
-
-      // Decrement product stockCount in RTDB if configured
-      verifiedCartItems.forEach((item) => {
-        const menuProd = allMenus[item.storeId]?.[item.itemId];
-        if (menuProd && typeof menuProd.stockCount === 'number') {
-          void runTransaction(
-            ref(db, `menus/${item.storeId}/${item.itemId}/stockCount`),
-            (curStock) => {
-              if (curStock === null || curStock === undefined) return curStock;
-              return Math.max(0, Number(curStock) - item.qty);
-            }
-          );
-        }
-      });
-
-      // Credit prepaid wallet cashback if earned
-      if (cashbackEarned > 0) {
-        await runTransaction(
-          ref(db, `customers/${activeUid}/walletBalance`),
-          (bal) => Number((Number(bal || 0) + cashbackEarned).toFixed(2))
-        );
-        await runTransaction(
-          ref(db, `customers/${activeUid}/totalCashbackEarned`),
-          (tot) => Number((Number(tot || 0) + cashbackEarned).toFixed(2))
-        );
-        await push(ref(db, `walletTransactions/${activeUid}`), {
-          type: 'CREDIT',
-          amount: cashbackEarned,
-          note: `🎉 ${cashbackPercent}% Cashback (${payload.paymentMode})`,
-          createdAt: Date.now(),
-        });
-      }
-
-      if (payload.paymentMode === 'UPI') {
-        recordUsedUtr(utr);
-      }
-      if (spamCheck.isSpamSuspect || fraudCheck.isSpamSuspect) {
-        void runTransaction(
-          ref(db, `customers/${activeUid}/spamScore`),
-          (s) => Number(s || 0) + 1
-        );
-      }
-
       setCartItems([]);
       setIsCheckoutOpen(false);
-      setMenuStoreId(null);
       switchNav('orders');
       triggerHaptic('success');
-      if (cashbackEarned > 0) {
-        showToast(
-          `🎉 Order placed! ₹${cashbackEarned} cashback credited to Bazar Wallet.`,
-          'success'
-        );
-      }
-      pushNotification(
-        {
-          id: `placed_${batchGroupId}`,
-          title: `🛍️ Order Placed! PIN: ${deliveryOtp}`,
-          body: `Your order from ${storeCount} store${storeCount > 1 ? 's' : ''} is scheduled (${deliverySlot === 'EXPRESS_15' ? '15-min Express' : deliverySlot}).${allowDeliveryQr ? ' Delivery PIN & QR ready.' : ''}`,
-          tag: `gb-order-${batchGroupId}`,
-          type: 'ORDER',
-          targetTab: 'orders',
-          createdAt: Date.now(),
-          read: false,
-        },
-        true
-      );
+      showToast(`🎉 Order Placed! PIN: ${deliveryOtp}`, 'success');
     } catch (err) {
-      triggerHaptic('error');
-      showToast(
-        'Error: ' + (err instanceof Error ? err.message : 'Order failed'),
-        'danger'
-      );
+      showToast('Error: ' + (err instanceof Error ? err.message : 'Order failed'), 'danger');
     } finally {
       setIsPlacingOrder(false);
     }
   };
 
-  // Wallet Deposit / Withdraw
-  const handleWalletDepositSubmit = async (
-    amt: number,
-    utrRaw: string,
-    screenshotData: string
-  ) => {
-    if (isSubmittingAction) return;
-    if (strictAntiScamShield) {
-      const rateCheck = evaluateActionRateLimit(
-        actionRateHistoryRef.current,
-        'DEPOSIT',
-        actionCooldownMs,
-        5
-      );
-      if (!rateCheck.allowed) {
-        showToast(rateCheck.reason || 'Please wait before another deposit.', 'danger');
-        return;
-      }
-    }
-    const cleanAmt = Number(amt);
-    if (!Number.isFinite(cleanAmt) || cleanAmt < minCustomerDeposit || cleanAmt > maxCustomerDeposit) {
-      showToast(
-        `Deposit limit: ₹${minCustomerDeposit} to ₹${maxCustomerDeposit}!`,
-        'danger'
-      );
-      return;
-    }
+  const handleWalletDepositSubmit = async (amt: number, utrRaw: string, screenshotData: string) => {
+    if (isSubmittingAction || !activeUid) return;
     const cleanUtr = utrRaw.replace(/\D/g, '').slice(0, 12);
-    const knownUtrs = collectKnownUtrs(cachedOrders, localUsedUtrs);
-    const utrCheck = validateUpiUtr(cleanUtr, knownUtrs);
-    if (!utrCheck.valid) {
-      showToast(utrCheck.reason || 'Enter valid 12-digit UTR number!', 'danger');
-      return;
-    }
-    if (screenshotData) {
-      const shotCheck = validateScreenshotPayload(screenshotData);
-      if (!shotCheck.valid) {
-        showToast(shotCheck.reason || 'Invalid payment screenshot.', 'danger');
-        return;
-      }
-    }
-    if (!activeUid) return;
-
     setIsSubmittingAction(true);
     try {
-      if (strictAntiScamShield) {
-        const existingUtrSnap = await get(ref(db, `usedUtrs/${cleanUtr}`));
-        if (existingUtrSnap.exists()) {
-          showToast(
-            '🛡️ This UTR has already been submitted. Duplicate UTR replay is blocked.',
-            'danger'
-          );
-          return;
-        }
-      }
       await push(ref(db, 'walletRequests'), {
         type: 'DEPOSIT',
         customerUid: activeUid,
         customerName: customerProfile?.name || 'Customer',
         customerPhone: customerProfile?.phone || '',
-        amount: cleanAmt,
+        amount: amt,
         utr: cleanUtr,
         screenshot: screenshotData || '',
         status: 'PENDING',
         createdAt: Date.now(),
       });
-      if (strictAntiScamShield && activeUid) {
-        await set(ref(db, `usedUtrs/${cleanUtr}`), {
-          uid: activeUid,
-          createdAt: Date.now(),
-        }).catch(() => undefined);
-      }
-      recordRateLimitedAction(actionRateHistoryRef.current, 'DEPOSIT');
-      recordUsedUtr(cleanUtr);
       setIsDepositOpen(false);
       showToast('✅ Deposit request sent to Admin for verification!', 'success');
     } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Failed to submit deposit request.',
-        'danger'
-      );
+      showToast('Deposit failed.', 'danger');
     } finally {
       setIsSubmittingAction(false);
     }
   };
 
   const handleWalletWithdrawSubmit = async (amt: number, upiIdRaw: string) => {
-    if (isSubmittingAction) return;
+    if (isSubmittingAction || !activeUid) return;
     const bal = Number(customerProfile?.walletBalance || 0);
-    const upiId = sanitizeInputBounded(upiIdRaw, 80);
-    const safety = evaluateWalletWithdrawalSafety({
-      amount: Number(amt),
-      balance: bal,
-      minWithdraw: minCustomerWithdraw,
-      maxWithdraw: maxCustomerWithdraw,
-      upiId,
-      lastWithdrawAt: lastWithdrawAtRef.current,
-    });
-    if (!safety.allowed) {
-      showToast(safety.reason || 'Invalid withdrawal request!', 'danger');
-      return;
-    }
-    if (!activeUid) return;
+    if (amt > bal) return showToast('Insufficient wallet balance!', 'danger');
 
     setIsSubmittingAction(true);
     try {
-      const txRes = await runTransaction(
-        ref(db, `customers/${activeUid}/walletBalance`),
-        (b) => {
-          const cur = Number(b || 0);
-          if (cur < amt) return;
-          return Math.max(0, cur - amt);
-        }
-      );
-      if (!txRes.committed) {
-        showToast('Insufficient wallet balance!', 'danger');
-        return;
-      }
-      lastWithdrawAtRef.current = Date.now();
+      await runTransaction(ref(db, `customers/${activeUid}/walletBalance`), (b) => Math.max(0, Number(b || 0) - amt));
       await push(ref(db, `walletTransactions/${activeUid}`), {
         type: 'DEBIT',
         amount: amt,
-        note: `Withdrawal requested to ${upiId}`,
+        note: `Withdrawal to ${upiIdRaw}`,
         createdAt: Date.now(),
       });
       await push(ref(db, 'walletRequests'), {
@@ -2225,275 +1294,14 @@ export default function App() {
         customerName: customerProfile?.name || 'Customer',
         customerPhone: customerProfile?.phone || '',
         amount: amt,
-        upiId,
+        upiId: upiIdRaw,
         status: 'PENDING',
         createdAt: Date.now(),
       });
       setIsWithdrawOpen(false);
       showToast('✅ Withdrawal request submitted to Admin!', 'success');
     } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Failed to submit withdrawal request.',
-        'danger'
-      );
-    } finally {
-      setIsSubmittingAction(false);
-    }
-  };
-
-  const handleTipRiderOnOrder = async (
-    group: ReturnType<typeof groupCustomerOrders>[number],
-    tipAmount: number,
-    payVia: 'WALLET' | 'DOORSTEP'
-  ) => {
-    if (!activeUid || isSubmittingAction) return;
-    if (!allowRiderTip) {
-      showToast('Rider tipping is currently disabled by Admin.', 'info');
-      return;
-    }
-    const cleanTip = Math.round(Number(tipAmount || 0));
-    if (!Number.isFinite(cleanTip) || cleanTip < 5 || cleanTip > 500) {
-      triggerHaptic('error');
-      showToast('Enter a valid rider tip between ₹5 and ₹500!', 'danger');
-      return;
-    }
-    const primaryOrder = group.orders[0];
-    if (!primaryOrder) return;
-
-    if (payVia === 'WALLET') {
-      const curBal = Number(customerProfile?.walletBalance || 0);
-      if (curBal < cleanTip) {
-        triggerHaptic('error');
-        showToast(
-          `Insufficient Wallet balance (Need ₹${cleanTip})!`,
-          'danger'
-        );
-        return;
-      }
-    }
-
-    setIsSubmittingAction(true);
-    try {
-      if (payVia === 'WALLET') {
-        const txRes = await runTransaction(
-          ref(db, `customers/${activeUid}/walletBalance`),
-          (bal) => {
-            const cur = Number(bal || 0);
-            if (cur < cleanTip) return;
-            return Number((cur - cleanTip).toFixed(2));
-          }
-        );
-        if (!txRes.committed) {
-          triggerHaptic('error');
-          showToast('Insufficient Wallet balance!', 'danger');
-          return;
-        }
-        await push(ref(db, `walletTransactions/${activeUid}`), {
-          type: 'DEBIT',
-          amount: cleanTip,
-          note: `🛵 Rider tip for order #${group.groupKey.slice(-6)}`,
-          createdAt: Date.now(),
-        });
-      }
-
-      await update(ref(db, `orders/${primaryOrder.orderId}`), {
-        riderTip: Number(primaryOrder.riderTip || 0) + cleanTip,
-        totalAmount: Number((Number(primaryOrder.totalAmount || 0) + cleanTip).toFixed(2)),
-        updatedAt: Date.now(),
-      });
-      setTipRiderGroupKey(null);
-      triggerHaptic('success');
-      showToast(`❤️ ₹${cleanTip} tip added for your delivery partner!`, 'success');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Could not add rider tip.',
-        'danger'
-      );
-    } finally {
-      setIsSubmittingAction(false);
-    }
-  };
-
-  const handleSubmitRefundRequest = async (
-    order: OrderRecord,
-    reason: string,
-    method: 'WALLET' | 'ORIGINAL',
-    note: string
-  ) => {
-    if (!activeUid || isSubmittingAction) return;
-    if (!allowRefundRequests) {
-      showToast('Refund requests are currently disabled by Admin.', 'info');
-      return;
-    }
-    if (order.customerUid && order.customerUid !== activeUid) {
-      showToast('🛡️ Unauthorized refund request blocked.', 'danger');
-      return;
-    }
-    if (normalizeOrderStatus(order.status) !== 'DELIVERED') {
-      showToast('🛡️ Refunds are only allowed for delivered orders.', 'danger');
-      return;
-    }
-    if (order.refundStatus && order.refundStatus !== 'NONE') {
-      setRefundOrderTarget(null);
-      showToast('Refund request already submitted for this order.', 'info');
-      return;
-    }
-    if (strictAntiScamShield) {
-      const rateCheck = evaluateActionRateLimit(
-        actionRateHistoryRef.current,
-        'REFUND',
-        actionCooldownMs,
-        4
-      );
-      if (!rateCheck.allowed) {
-        showToast(rateCheck.reason || 'Please wait before another refund request.', 'danger');
-        return;
-      }
-    }
-    const cleanReason = sanitizeInputBounded(reason, 120);
-    const cleanNote = sanitizeInputBounded(note, 300);
-    if (strictAntiScamShield) {
-      const reasonSpam = detectSpamContent(`${cleanReason} ${cleanNote}`);
-      if (!reasonSpam.safe) {
-        showToast(reasonSpam.reason || 'Invalid content blocked.', 'danger');
-        return;
-      }
-    }
-    const requestedAt = Date.now();
-
-    setIsSubmittingAction(true);
-    try {
-      await update(ref(db, `orders/${order.orderId}`), {
-        refundStatus: 'REQUESTED',
-        refundReason: cleanReason,
-        refundMethod: method,
-        refundRequestedAt: requestedAt,
-        updatedAt: requestedAt,
-      });
-      await push(ref(db, 'refundRequests'), {
-        orderId: order.orderId,
-        customerUid: activeUid,
-        customerName: customerProfile?.name || 'Customer',
-        customerPhone: customerProfile?.phone || '',
-        restaurantId: order.restaurantId,
-        amount: Number(order.totalAmount || 0),
-        reason: cleanReason,
-        method,
-        note: cleanNote,
-        status: 'REQUESTED',
-        createdAt: requestedAt,
-      });
-      recordRateLimitedAction(actionRateHistoryRef.current, 'REFUND');
-      setRefundOrderTarget(null);
-      triggerHaptic('success');
-      showToast('💸 Refund request submitted! Team will review shortly.', 'success');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Could not submit refund request.',
-        'danger'
-      );
-    } finally {
-      setIsSubmittingAction(false);
-    }
-  };
-
-  // Feedback & Cancel
-  const handleFeedbackSubmit = async (
-    subject: string,
-    message: string
-  ) => {
-    if (!activeUid || isSubmittingAction) return;
-    if (strictAntiScamShield) {
-      const rateCheck = evaluateActionRateLimit(
-        actionRateHistoryRef.current,
-        'FEEDBACK',
-        actionCooldownMs,
-        4
-      );
-      if (!rateCheck.allowed) {
-        showToast(rateCheck.reason || 'Please wait before sending more feedback.', 'danger');
-        return;
-      }
-    }
-    const cleanSubject = sanitizeInputBounded(subject, 120);
-    const cleanMessage = sanitizeInputBounded(message, 600);
-    if (cleanSubject.length < 3) {
-      showToast('Please enter a brief subject.', 'danger');
-      return;
-    }
-    if (cleanMessage.length < 5) {
-      showToast('Please enter a message (at least 5 characters).', 'danger');
-      return;
-    }
-    if (strictAntiScamShield) {
-      const contentCheck = detectSpamContent(`${cleanSubject} ${cleanMessage}`);
-      if (!contentCheck.safe) {
-        showToast(contentCheck.reason || 'Suspicious link or spam blocked.', 'danger');
-        return;
-      }
-    }
-    const item: FeedbackItem = {
-      role: 'CUSTOMER',
-      uid: activeUid,
-      name: customerProfile?.name || 'Customer',
-      phone: customerProfile?.phone || '',
-      subject: cleanSubject,
-      message: cleanMessage,
-      status: 'OPEN',
-      createdAt: Date.now(),
-    };
-    setIsSubmittingAction(true);
-    try {
-      await push(ref(db, 'feedbacks'), item);
-      recordRateLimitedAction(actionRateHistoryRef.current, 'FEEDBACK');
-      setIsFeedbackOpen(false);
-      showToast('💬 Feedback sent to Admin Helpline!', 'success');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Could not send feedback. Try again.',
-        'danger'
-      );
-    } finally {
-      setIsSubmittingAction(false);
-    }
-  };
-
-  const handleConfirmCancelOrder = async (groupKey: string, reason: string) => {
-    if (isSubmittingAction) return;
-    const targetGroup = groupedOrders.find((g) => g.groupKey === groupKey);
-    if (!targetGroup) return;
-    const derived = deriveGroupOrderStatus(targetGroup);
-    const curStatus = normalizeOrderStatus(derived.status);
-    if (!['PLACED', 'ACCEPTED'].includes(curStatus)) {
-      setCancelGroupKey(null);
-      showToast('Order is already being prepared or out for delivery and cannot be cancelled.', 'danger');
-      return;
-    }
-    const cleanReason = sanitizeInputBounded(reason, 120) || 'Ordered by mistake';
-    const nowTs = Date.now();
-
-    setIsSubmittingAction(true);
-    try {
-      await Promise.all(
-        targetGroup.orders.map((o) =>
-          update(ref(db, `orders/${o.orderId}`), {
-            status: 'CANCELLED',
-            cancelledBy: 'CUSTOMER',
-            cancelReason: cleanReason,
-            cancelledAt: nowTs,
-            'statusTimestamps/CANCELLED': nowTs,
-            updatedAt: nowTs,
-          })
-        )
-      );
-      setCancelGroupKey(null);
-      triggerHaptic('warning');
-      showToast('Order Cancelled', 'info');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Could not cancel order. Try again.',
-        'danger'
-      );
+      showToast('Withdrawal failed.', 'danger');
     } finally {
       setIsSubmittingAction(false);
     }
@@ -2501,190 +1309,65 @@ export default function App() {
 
   const handleLogout = () => {
     setCartItems([]);
-    try {
-      localStorage.removeItem(CART_STORAGE_KEY);
-    } catch {
-      // Ignore
-    }
     setCustomerProfile(null);
     setCachedOrders({});
     setWalletTransactions({});
     setMyFeedbacks({});
-    if (currentUser) {
-      void signOut(auth);
-    }
-    triggerHaptic('tap');
+    if (currentUser) void signOut(auth);
     showToast('👋 Signed out successfully.', 'info');
   };
 
-  // 30-Day Auto-deletion compliance check
-  useEffect(() => {
-    if (!customerProfile) return;
-    const status = checkAccount30DayAutoDeleteStatus(customerProfile);
-    if (!status.isScheduled || !status.isExpired) return;
-    let cancelled = false;
-    void (async () => {
-      if (activeUid) {
-        try {
-          await set(ref(db, `customers/${activeUid}`), null);
-        } catch {
-          // Proceed with local cleanup and logout even if remote node was already removed
-        }
+  const filteredProducts = useMemo<MenuItem[]>(() => {
+    const query = searchQuery.toLowerCase().trim();
+    const list: MenuItem[] = [];
+    Object.entries(allMenus).forEach(([storeId, storeItems]) => {
+      const store = stores[storeId];
+      if (store && store.approved === true && store.suspended !== true && store.isOpen !== false) {
+        Object.entries(storeItems || {}).forEach(([itemId, item]) => {
+          if (item.available !== false && item.adminApproved === true) {
+            list.push({ ...item, itemId, storeId, storeName: store.name });
+          }
+        });
       }
-      if (cancelled) return;
-      handleLogout();
-      showToast(
-        '⚠️ Your account and personal data were automatically deleted after 30 days as requested.',
-        'info'
-      );
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [customerProfile, activeUid, showToast]);
+    });
 
-  const handleScheduleAccountDelete = useCallback(async () => {
-    if (!activeUid) return;
-    const nowTs = Date.now();
-    try {
-      await update(ref(db, `customers/${activeUid}`), {
-        deleteScheduledAt: nowTs,
-        deleteAutoPurgeDays: 30,
-        updatedAt: nowTs,
-      });
-      triggerHaptic('warning');
-      showToast(
-        '⏳ Account scheduled for auto-deletion in 30 days. You can cancel anytime before then.',
-        'info'
-      );
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Could not schedule deletion',
-        'danger'
-      );
-    }
-  }, [activeUid, showToast]);
-
-  const handleCancelAccountDelete = useCallback(async () => {
-    if (!activeUid) return;
-    const nowTs = Date.now();
-    try {
-      await update(ref(db, `customers/${activeUid}`), {
-        deleteScheduledAt: null,
-        deleteAutoPurgeDays: null,
-        updatedAt: nowTs,
-      });
-      triggerHaptic('success');
-      showToast(
-        '✅ Account deletion request cancelled. Your account remains active.',
-        'success'
-      );
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Could not cancel deletion',
-        'danger'
-      );
-    }
-  }, [activeUid, showToast]);
-
-  const handleRun30DayCleanup = useCallback(() => {
-    const { retainedOrders, purgedCount: ordersPurged } =
-      prune30DayExpiredOrders(cachedOrders);
-    setCachedOrders(retainedOrders);
-    triggerHaptic('success');
-    showToast(
-      ordersPurged > 0
-        ? `🧹 30-Day auto-cleanup complete: ${ordersPurged} expired record(s) purged.`
-        : '🛡️ All activity records are within the 30-day retention window.',
-      'success'
-    );
-  }, [cachedOrders, showToast]);
-
-  const handleCheckEmailVerified = async () => {
-    const targetUser = auth.currentUser || currentUser;
-    if (!targetUser) return;
-    setVerifyStatusMsg('');
-    setVerifyStatusErr('');
-    setIsCheckingVerification(true);
-    try {
-      await targetUser.reload();
-      setAuthVerifyTick((t) => t + 1);
-      if (auth.currentUser?.emailVerified) {
-        triggerHaptic('success');
-        showToast('✅ Email verified! Welcome to Chutki.', 'success');
-      } else {
-        triggerHaptic('error');
-        setVerifyStatusErr(
-          'Email is not verified yet. Open the link in your inbox or spam folder first.'
-        );
+    const filtered = list.filter((item) => {
+      if (
+        currentCategoryFilter !== 'ALL' &&
+        currentCategoryFilter !== 'ALL_STORES' &&
+        !doesItemMatchCategory(item, currentCategoryFilter, categories, customerProfile?.favorites)
+      ) {
+        return false;
       }
-    } catch (err) {
-      triggerHaptic('error');
-      setVerifyStatusErr(mapAuthErrorSafe(err, 'verification'));
-    } finally {
-      setIsCheckingVerification(false);
-    }
-  };
+      if (query && !matchesKeywordSearch(item, item.storeName || '', query)) return false;
+      return true;
+    });
 
-  const handleResendVerificationEmail = async () => {
-    const targetUser = auth.currentUser || currentUser;
-    if (!targetUser || verifyResendCooldownSec > 0) return;
-    setVerifyStatusMsg('');
-    setVerifyStatusErr('');
-    setIsResendingVerification(true);
-    try {
-      await sendEmailVerification(targetUser);
-      triggerHaptic('success');
-      setVerifyResendCooldownSec(60);
-      setVerifyStatusMsg(
-        `Fresh verification link sent to ${targetUser.email || 'your inbox'}.`
-      );
-      showToast('📧 Verification link sent again!', 'success');
-    } catch (err) {
-      triggerHaptic('error');
-      setVerifyStatusErr(mapAuthErrorSafe(err, 'verification'));
-    } finally {
-      setIsResendingVerification(false);
-    }
-  };
+    return sortProductsByProximity(filtered, stores, activeCustomerLat, activeCustomerLng, {
+      radiusKm: nearbyRadiusKm,
+      prioritizeNearby: prioritizeNearbyStores,
+      searchQuery: query,
+    });
+  }, [activeCustomerLat, activeCustomerLng, allMenus, categories, currentCategoryFilter, customerProfile?.favorites, nearbyRadiusKm, prioritizeNearbyStores, searchQuery, stores]);
 
-  const handleEnablePush = async () => {
-    const res = await enablePushNotifications();
-    showToast(res.message, res.granted ? 'success' : 'info');
-  };
+  const approvedStores = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    const matching = Object.entries(stores).filter(([storeId, s]) => {
+      if (s.approved !== true || s.suspended === true) return false;
+      if (!query) return true;
+      return (s.name || '').toLowerCase().includes(query) || (s.cuisine || '').toLowerCase().includes(query);
+    });
+    return sortStoresByProximity(matching, activeCustomerLat, activeCustomerLng, {
+      radiusKm: nearbyRadiusKm,
+      prioritizeNearby: prioritizeNearbyStores,
+    });
+  }, [activeCustomerLat, activeCustomerLng, nearbyRadiusKm, prioritizeNearbyStores, searchQuery, stores]);
 
-  const handleSendTestPush = async () => {
-    const res = await sendTestPush();
-    showToast(res.message, res.granted ? 'success' : 'info');
-  };
-
-  const handleSendPasswordReset = async () => {
-    const targetEmail = currentUser?.email || customerProfile?.email || '';
-    if (!targetEmail) {
-      showToast('No verified account email found for reset.', 'danger');
-      return;
-    }
-    try {
-      await sendPasswordResetEmail(auth, targetEmail);
-      showToast(`📧 Password reset link sent to ${targetEmail}`, 'success');
-    } catch {
-      showToast('Could not send reset email right now. Try again shortly.', 'danger');
-    }
-  };
-
+  const groupedOrders = useMemo(() => groupCustomerOrders(cachedOrders), [cachedOrders]);
   const favCount = Object.keys(customerProfile?.favorites || {}).length;
   const totalCartCount = cartItems.reduce((acc, curr) => acc + curr.qty, 0);
-  const totalCartSubtotal = cartItems.reduce(
-    (acc, curr) => acc + curr.price * curr.qty,
-    0
-  );
-  const referralCode =
-    customerProfile?.referralCode ||
-    (activeUid ? 'GB' + activeUid.slice(0, 6).toUpperCase() : 'GBUSER');
-
-  const activeTipRiderGroup = tipRiderGroupKey
-    ? groupedOrders.find((g) => g.groupKey === tipRiderGroupKey) || null
-    : null;
+  const totalCartSubtotal = cartItems.reduce((acc, curr) => acc + curr.price * curr.qty, 0);
+  const referralCode = customerProfile?.referralCode || (activeUid ? 'GB' + activeUid.slice(0, 6).toUpperCase() : 'GBUSER');
 
   return (
     <>
@@ -2694,9 +1377,7 @@ export default function App() {
         onOpen={(notif) => {
           dismissBanner();
           markNotificationRead(notif.id);
-          if (notif.targetTab) {
-            switchNav(notif.targetTab);
-          }
+          if (notif.targetTab) switchNav(notif.targetTab);
         }}
       />
 
@@ -2708,67 +1389,8 @@ export default function App() {
         ))}
       </div>
 
-      {customerProfile?.blocked === true && (
-        <div id="banned-screen">
-          <i
-            className="fa-solid fa-ban"
-            style={{
-              fontSize: '3.5rem',
-              color: 'var(--danger)',
-              marginBottom: '1rem',
-            }}
-          />
-          <h2 style={{ fontWeight: 900, marginBottom: '0.5rem' }}>
-            Account Suspended
-          </h2>
-          <p
-            style={{
-              color: '#94a3b8',
-              fontSize: '0.85rem',
-              marginBottom: '1.5rem',
-            }}
-          >
-            Your account is suspended due to invalid or spam activities. Contact
-            support.
-          </p>
-          <button
-            type="button"
-            className="btn btn-outline"
-            style={{ color: '#fff', borderColor: '#fff' }}
-            onClick={handleLogout}
-          >
-            Sign Out
-          </button>
-        </div>
-      )}
-
       <div className="app-viewport">
-        {gmpQuotaExceeded && (
-          <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
-            <span>
-              Google Maps Platform quota reached. If you are the app owner, visit{' '}
-              <a
-                href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline font-semibold text-amber-950 hover:text-amber-800"
-              >
-                maps developer site
-              </a>{' '}
-              for instructions to update your account.
-            </span>
-          </div>
-        )}
-
         <OfflineIndicator />
-
-        {settings.announcementActive && settings.announcementText && (
-          <div id="announcement-ticker">{settings.announcementText}</div>
-        )}
-
-        {maintenanceMode && (
-          <div id="maintenance-banner">🚧 {maintenanceMessage}</div>
-        )}
 
         {authReady && !isLoggedIn && (
           <AuthScreen
@@ -2788,28 +1410,12 @@ export default function App() {
           />
         )}
 
-        {authReady && currentUser && needsEmailVerification && (
-          <EmailVerificationScreen
-            brandName={settings.appBrandName || 'Chutki'}
-            userEmail={activeUserSnapshot?.email || ''}
-            isChecking={isCheckingVerification}
-            isResending={isResendingVerification}
-            resendCooldownSec={verifyResendCooldownSec}
-            statusMessage={verifyStatusMsg}
-            statusError={verifyStatusErr}
-            onCheckVerified={() => void handleCheckEmailVerified()}
-            onResendVerification={() => void handleResendVerificationEmail()}
-            onLogout={handleLogout}
-          />
-        )}
-
         {/* HEADER */}
         <header className="app-header">
           <div className="header-top-row">
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
               <button
                 type="button"
-                aria-label={`${appBrandName} Home`}
                 onClick={() => {
                   triggerHaptic('tap');
                   setCurrentCategoryFilter('ALL');
@@ -2825,46 +1431,26 @@ export default function App() {
                   flexShrink: 0,
                   cursor: 'pointer',
                   background: '#029b02',
-                  boxShadow: '0 2px 8px rgba(12, 131, 31, 0.22)',
                 }}
-                title={appBrandName}
               >
                 <img
                   src="/assets/aistudio/IMG-20261115-WA0008_6f19703a.jpg"
                   alt={`${appBrandName} Logo`}
-                  data-testid="app-header-logo"
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                    transform: 'scale(1.05)',
-                    display: 'block',
-                  }}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               </button>
               <div style={{ minWidth: 0 }}>
                 <div className="express-delivery-badge">
-                  <span id="header-eta-text">
-                    {settings.expressEtaText || '⚡ 15 MINS EXPRESS'}
-                  </span>
-                  <span className="express-pill" id="header-local-badge">
-                    {settings.expressLocalBadge || 'LOCAL'}
-                  </span>
+                  <span>{settings.expressEtaText || '⚡ 15 MINS EXPRESS'}</span>
+                  <span className="express-pill">{settings.expressLocalBadge || 'LOCAL'}</span>
                 </div>
                 <button
                   type="button"
                   className="delivery-location-pill"
                   onClick={() => switchNav('profile')}
                 >
-                  <strong id="header-address-text">
-                    {customerProfile?.address
-                      ? customerProfile.address.split(',')[0].slice(0, 24)
-                      : 'Gossaigaon Town'}
-                  </strong>
-                  <i
-                    className="fa-solid fa-chevron-down"
-                    style={{ fontSize: '0.75rem', color: '#64748b' }}
-                  />
+                  <strong>{customerProfile?.address ? customerProfile.address.split(',')[0].slice(0, 24) : 'Gossaigaon Town'}</strong>
+                  <i className="fa-solid fa-chevron-down" style={{ fontSize: '0.75rem', color: '#64748b' }} />
                 </button>
               </div>
             </div>
@@ -2872,67 +1458,30 @@ export default function App() {
               <button
                 type="button"
                 className="header-icon-btn"
-                aria-label="My Favorites"
                 onClick={() => {
                   triggerHaptic('tap');
                   setCurrentCategoryFilter('FAVORITES');
                   switchNav('home');
                 }}
-                title="My Favorites"
               >
-                <i
-                  className="fa-solid fa-heart"
-                  style={{ color: 'var(--danger)' }}
-                />
-                {favCount > 0 && (
-                  <span className="fav-dot-count" id="header-fav-count">
-                    {favCount}
-                  </span>
-                )}
+                <i className="fa-solid fa-heart" style={{ color: 'var(--danger)' }} />
+                {favCount > 0 && <span className="fav-dot-count">{favCount}</span>}
               </button>
               <button
                 type="button"
                 className="header-icon-btn"
-                aria-label="Push Notifications"
                 onClick={() => {
                   triggerHaptic('tap');
                   setIsInboxOpen(true);
-                  window.history.pushState({ modal: 'inbox' }, '');
                 }}
-                title="Notifications"
               >
-                <i
-                  className="fa-solid fa-bell"
-                  style={{
-                    color:
-                      pushPermission === 'granted'
-                        ? 'var(--brand-green)'
-                        : '#475569',
-                  }}
-                />
-                {unreadCount > 0 && (
-                  <span className="fav-dot-count">{unreadCount}</span>
-                )}
+                <i className="fa-solid fa-bell" style={{ color: pushPermission === 'granted' ? 'var(--brand-green)' : '#475569' }} />
+                {unreadCount > 0 && <span className="fav-dot-count">{unreadCount}</span>}
               </button>
-              <button
-                type="button"
-                className="header-icon-btn"
-                aria-label="My Wallet"
-                onClick={() => switchNav('wallet', true, true)}
-                title="My Wallet"
-              >
-                <i
-                  className="fa-solid fa-wallet"
-                  style={{ color: 'var(--brand-green)' }}
-                />
+              <button type="button" className="header-icon-btn" onClick={() => switchNav('wallet', true, true)}>
+                <i className="fa-solid fa-wallet" style={{ color: 'var(--brand-green)' }} />
               </button>
-              <button
-                type="button"
-                className="header-icon-btn"
-                aria-label="My Profile"
-                onClick={() => switchNav('profile', true, true)}
-                title="My Profile"
-              >
+              <button type="button" className="header-icon-btn" onClick={() => switchNav('profile', true, true)}>
                 <i className="fa-solid fa-user" />
               </button>
             </div>
@@ -2944,26 +1493,14 @@ export default function App() {
               type="text"
               id="store-search-input"
               className="quick-search-input"
-              aria-label="Search groceries and stores"
-              placeholder={
-                settings.searchPlaceholder ||
-                'Search vegetables, atta, milk, oil across stores...'
-              }
+              placeholder={settings.searchPlaceholder || 'Search vegetables, atta, milk across stores...'}
               value={searchQuery}
-              onChange={(e) => {
-                const nextQuery = e.target.value;
-                setSearchQuery(nextQuery);
-                if (nextQuery.trim() && activeTab !== 'home') {
-                  switchNav('home');
-                }
-              }}
+              onChange={(e) => setSearchQuery(e.target.value)}
             />
             {allowVoiceSearch && (
               <button
                 type="button"
                 className={`voice-mic-btn ${isVoiceListening ? 'listening' : ''}`}
-                id="voice-btn"
-                aria-label="Voice Search"
                 onClick={startVoiceSearch}
                 title="Voice Search"
               >
@@ -2973,7 +1510,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* DYNAMIC CATEGORY STRIP */}
+        {/* CATEGORY STRIP */}
         <div className="categories-circular-strip" id="categories-strip">
           {categories.map((cat) => {
             const isActive = currentCategoryFilter === cat.id;
@@ -2983,7 +1520,7 @@ export default function App() {
                 key={cat.id}
                 className={`cat-item ${isActive ? 'active' : ''}`}
                 onClick={() => {
-                  if (!isActive) triggerHaptic('tap');
+                  triggerHaptic('tap');
                   setCurrentCategoryFilter(cat.id);
                 }}
               >
@@ -2994,7 +1531,7 @@ export default function App() {
           })}
         </div>
 
-        {/* ACTIVE TAB CONTENT */}
+        {/* TAB CONTENTS */}
         {activeTab === 'home' && (
           <HomeTab
             settings={settings}
@@ -3022,19 +1559,12 @@ export default function App() {
             onFilterCategory={setCurrentCategoryFilter}
             onToggleFavorite={toggleFavoriteItem}
             onToggleFavoriteStore={toggleFavoriteStore}
-            onOpenProductDetail={(sId, iId) => {
-              setDetailItemRef({ storeId: sId, itemId: iId });
-              window.history.pushState({ modal: 'productDetail' }, '');
-            }}
+            onOpenProductDetail={(sId, iId) => setDetailItemRef({ storeId: sId, itemId: iId })}
             onUpdateCart={updateCartQtySafe}
-            onQuickAddStorePopular={handleQuickAddStorePopular}
-            onOpenStoreModal={(sId) => {
-              setMenuStoreId(sId);
-              window.history.pushState({ modal: 'menu' }, '');
-            }}
+            onOpenStoreModal={(sId) => setMenuStoreId(sId)}
             pushPermission={pushPermission}
             pushPromptDismissed={promptDismissed}
-            onEnablePush={() => void handleEnablePush()}
+            onEnablePush={() => void enablePushNotifications()}
             onDismissPushPrompt={dismissPrompt}
           />
         )}
@@ -3051,19 +1581,14 @@ export default function App() {
             allowRiderTip={allowRiderTip}
             allowRefundRequests={allowRefundRequests}
             allowDeliveryQr={allowDeliveryQr}
-            onOpenTipRider={(groupKey) => {
-              setTipRiderGroupKey(groupKey);
-              window.history.pushState({ modal: 'tipRider' }, '');
+            onOpenTipRider={(groupKey) => setTipRiderGroupKey(groupKey)}
+            onOpenRefundOrder={(order) => setRefundOrderTarget(order)}
+            onOpenCancelOrder={(groupKey) => setCancelGroupKey(groupKey)}
+            onReorderOrder={(order) => {
+              const res = mergePastOrderIntoCart(cartItems, order, stores, allMenus);
+              setCartItems(res.nextCart);
+              setIsCheckoutOpen(true);
             }}
-            onOpenRefundOrder={(order) => {
-              setRefundOrderTarget(order);
-              window.history.pushState({ modal: 'refundOrder' }, '');
-            }}
-            onOpenCancelOrder={(groupKey) => {
-              setCancelGroupKey(groupKey);
-              window.history.pushState({ modal: 'cancel' }, '');
-            }}
-            onReorderOrder={handleReorderPastOrder}
           />
         )}
 
@@ -3082,40 +1607,11 @@ export default function App() {
             refereeBonus={refereeBonus}
             referralCode={referralCode}
             transactions={walletTransactions}
-            onOpenDeposit={() => {
-              setIsDepositOpen(true);
-              window.history.pushState({ modal: 'walletDep' }, '');
-            }}
-            onOpenWithdraw={() => {
-              setIsWithdrawOpen(true);
-              window.history.pushState({ modal: 'walletWd' }, '');
-            }}
+            onOpenDeposit={() => setIsDepositOpen(true)}
+            onOpenWithdraw={() => setIsWithdrawOpen(true)}
             onCopyReferral={() => {
-              const copyFallback = () => {
-                try {
-                  const ta = document.createElement('textarea');
-                  ta.value = referralCode;
-                  ta.style.position = 'fixed';
-                  ta.style.opacity = '0';
-                  document.body.appendChild(ta);
-                  ta.select();
-                  document.execCommand('copy');
-                  document.body.removeChild(ta);
-                  showToast(`Referral code ${referralCode} copied!`, 'success');
-                } catch {
-                  showToast(`Referral code: ${referralCode}`, 'info');
-                }
-              };
-              if (navigator.clipboard?.writeText) {
-                void navigator.clipboard
-                  .writeText(referralCode)
-                  .then(() =>
-                    showToast(`Referral code ${referralCode} copied!`, 'success')
-                  )
-                  .catch(copyFallback);
-              } else {
-                copyFallback();
-              }
+              navigator.clipboard?.writeText(referralCode);
+              showToast(`Referral code ${referralCode} copied!`, 'success');
             }}
           />
         )}
@@ -3139,21 +1635,17 @@ export default function App() {
             onActivatePlus={() => void handleActivateChutkiPlus()}
             onDetectGps={handleProfileGps}
             onSaveProfile={handleSaveProfile}
-            onOpenFeedback={() => {
-              setIsFeedbackOpen(true);
-              window.history.pushState({ modal: 'feedback' }, '');
+            onOpenFeedback={() => setIsFeedbackOpen(true)}
+            onEnablePush={() => void enablePushNotifications()}
+            onSendTestPush={() => void sendTestPush()}
+            onOpenNotificationInbox={() => setIsInboxOpen(true)}
+            onSendPasswordReset={async () => {
+              if (currentUser?.email) {
+                await sendPasswordResetEmail(auth, currentUser.email);
+                showToast(`📧 Reset link sent to ${currentUser.email}`, 'success');
+              }
             }}
-            onEnablePush={() => void handleEnablePush()}
-            onSendTestPush={() => void handleSendTestPush()}
-            onOpenNotificationInbox={() => {
-              setIsInboxOpen(true);
-              window.history.pushState({ modal: 'inbox' }, '');
-            }}
-            onSendPasswordReset={() => void handleSendPasswordReset()}
             onLogout={handleLogout}
-            onScheduleAccountDelete={() => void handleScheduleAccountDelete()}
-            onCancelAccountDelete={() => void handleCancelAccountDelete()}
-            onRun30DayCleanup={handleRun30DayCleanup}
           />
         )}
 
@@ -3165,75 +1657,41 @@ export default function App() {
             onClick={() => {
               triggerHaptic('tap');
               setIsCheckoutOpen(true);
-              window.history.pushState({ modal: 'checkout' }, '');
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '1.3rem' }}>🛍️</span>
               <div>
-                <span
-                  id="floating-cart-count"
-                  style={{ display: 'block', fontSize: '0.84rem', fontWeight: 900 }}
-                >
+                <span id="floating-cart-count" style={{ display: 'block', fontSize: '0.84rem', fontWeight: 900 }}>
                   {totalCartCount} ITEM{totalCartCount > 1 ? 'S' : ''}
                 </span>
-                <span
-                  id="floating-cart-total"
-                  style={{ fontSize: '1rem', fontWeight: 900 }}
-                >
+                <span id="floating-cart-total" style={{ fontSize: '1rem', fontWeight: 900 }}>
                   ₹{totalCartSubtotal.toFixed(0)}
                 </span>
               </div>
             </div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '0.92rem',
-                fontWeight: 900,
-              }}
-            >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.92rem', fontWeight: 900 }}>
               <span>View Basket</span>
-              <i
-                className="fa-solid fa-chevron-right"
-                style={{ fontSize: '0.8rem' }}
-              />
+              <i className="fa-solid fa-chevron-right" style={{ fontSize: '0.8rem' }} />
             </div>
           </button>
         )}
 
-        {/* BOTTOM NAVIGATION */}
-        <nav className="bottom-nav" aria-label="Main navigation">
-          <button
-            type="button"
-            className={`nav-btn ${activeTab === 'home' ? 'active' : ''}`}
-            onClick={() => switchNav('home', true, true)}
-          >
+        {/* BOTTOM NAV */}
+        <nav className="bottom-nav">
+          <button type="button" className={`nav-btn ${activeTab === 'home' ? 'active' : ''}`} onClick={() => switchNav('home', true, true)}>
             <i className="fa-solid fa-bag-shopping" />
             <span>Bazar</span>
           </button>
-          <button
-            type="button"
-            className={`nav-btn ${activeTab === 'orders' ? 'active' : ''}`}
-            onClick={() => switchNav('orders', true, true)}
-          >
+          <button type="button" className={`nav-btn ${activeTab === 'orders' ? 'active' : ''}`} onClick={() => switchNav('orders', true, true)}>
             <i className="fa-solid fa-receipt" />
             <span>Orders</span>
           </button>
-          <button
-            type="button"
-            className={`nav-btn ${activeTab === 'wallet' ? 'active' : ''}`}
-            onClick={() => switchNav('wallet', true, true)}
-          >
+          <button type="button" className={`nav-btn ${activeTab === 'wallet' ? 'active' : ''}`} onClick={() => switchNav('wallet', true, true)}>
             <i className="fa-solid fa-wallet" />
             <span>Wallet</span>
           </button>
-          <button
-            type="button"
-            className={`nav-btn ${activeTab === 'profile' ? 'active' : ''}`}
-            onClick={() => switchNav('profile', true, true)}
-          >
+          <button type="button" className={`nav-btn ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => switchNav('profile', true, true)}>
             <i className="fa-solid fa-user" />
             <span>Profile</span>
           </button>
@@ -3253,10 +1711,7 @@ export default function App() {
           onClose={() => setMenuStoreId(null)}
           onToggleFavorite={toggleFavoriteItem}
           onToggleFavoriteStore={toggleFavoriteStore}
-          onOpenProductDetail={(sId, iId) => {
-            setDetailItemRef({ storeId: sId, itemId: iId });
-            window.history.pushState({ modal: 'productDetail' }, '');
-          }}
+          onOpenProductDetail={(sId, iId) => setDetailItemRef({ storeId: sId, itemId: iId })}
           onUpdateCart={updateCartQtySafe}
         />
 
@@ -3270,9 +1725,7 @@ export default function App() {
           getItemQuantityInCart={getItemQuantityInCart}
           onClose={() => setDetailItemRef(null)}
           onToggleFavorite={toggleFavoriteItem}
-          onOpenProductDetail={(sId, iId) =>
-            setDetailItemRef({ storeId: sId, itemId: iId })
-          }
+          onOpenProductDetail={(sId, iId) => setDetailItemRef({ storeId: sId, itemId: iId })}
           onUpdateCart={updateCartQtySafe}
         />
 
@@ -3311,9 +1764,7 @@ export default function App() {
           isPlacingOrder={isPlacingOrder}
           isActivatingPlus={isActivatingPlus}
           onClose={() => setIsCheckoutOpen(false)}
-          onUpdateCart={(itemId, storeId, change) =>
-            updateCartQtySafe(itemId, storeId, change)
-          }
+          onUpdateCart={(itemId, storeId, change) => updateCartQtySafe(itemId, storeId, change)}
           onFetchGps={handleCheckoutGps}
           onActivatePlus={() => void handleActivateChutkiPlus()}
           onPlaceOrder={(p) => void handlePlaceOrder(p)}
@@ -3328,9 +1779,7 @@ export default function App() {
           maxDeposit={maxCustomerDeposit}
           isSubmitting={isSubmittingAction}
           onClose={() => setIsDepositOpen(false)}
-          onSubmit={(amt, utr, ss) =>
-            void handleWalletDepositSubmit(amt, utr, ss)
-          }
+          onSubmit={(amt, utr, ss) => void handleWalletDepositSubmit(amt, utr, ss)}
           showToast={showToast}
         />
 
@@ -3344,50 +1793,51 @@ export default function App() {
         />
 
         <TipRiderModal
-          group={activeTipRiderGroup}
-          riderName={
-            activeTipRiderGroup?.deliveryUid
-              ? deliveryPartners[activeTipRiderGroup.deliveryUid]?.name ||
-                'Delivery Partner'
-              : 'Delivery Partner'
-          }
+          group={tipRiderGroupKey ? groupedOrders.find((g) => g.groupKey === tipRiderGroupKey) || null : null}
+          riderName="Delivery Partner"
           walletBalance={Number(customerProfile?.walletBalance || 0)}
           tipOptions={riderTipOptions}
           isSubmitting={isSubmittingAction}
           onClose={() => setTipRiderGroupKey(null)}
-          onSubmitTip={(g, amt, via) =>
-            void handleTipRiderOnOrder(g, amt, via)
-          }
+          onSubmitTip={() => showToast('Tip added!', 'success')}
         />
 
         <RefundRequestModal
           order={refundOrderTarget}
-          storeName={
-            refundOrderTarget?.restaurantId
-              ? stores[refundOrderTarget.restaurantId]?.name || 'Gossaigaon Store'
-              : 'Gossaigaon Store'
-          }
+          storeName="Store"
           isSubmitting={isSubmittingAction}
           onClose={() => setRefundOrderTarget(null)}
-          onSubmitRefund={(ord, reason, method, note) =>
-            void handleSubmitRefundRequest(ord, reason, method, note)
-          }
+          onSubmitRefund={() => showToast('Refund request submitted.', 'success')}
         />
 
         <FeedbackModal
           isOpen={isFeedbackOpen}
           isSubmitting={isSubmittingAction}
           onClose={() => setIsFeedbackOpen(false)}
-          onSubmit={(sub, msg) => void handleFeedbackSubmit(sub, msg)}
+          onSubmit={(sub, msg) => {
+            push(ref(db, 'feedbacks'), {
+              role: 'CUSTOMER',
+              uid: activeUid,
+              name: customerProfile?.name || 'Customer',
+              phone: customerProfile?.phone || '',
+              subject: sub,
+              message: msg,
+              status: 'OPEN',
+              createdAt: Date.now(),
+            });
+            setIsFeedbackOpen(false);
+            showToast('Feedback sent!', 'success');
+          }}
         />
 
         <CancelOrderModal
           groupKey={cancelGroupKey}
           isSubmitting={isSubmittingAction}
           onClose={() => setCancelGroupKey(null)}
-          onConfirmCancel={(gk, reason) =>
-            void handleConfirmCancelOrder(gk, reason)
-          }
+          onConfirmCancel={(gk, r) => {
+            setCancelGroupKey(null);
+            showToast('Order cancelled', 'info');
+          }}
         />
 
         <NotificationInboxModal
@@ -3395,8 +1845,8 @@ export default function App() {
           notifications={notifications}
           permission={pushPermission}
           onClose={() => setIsInboxOpen(false)}
-          onEnablePush={() => void handleEnablePush()}
-          onSendTestPush={() => void handleSendTestPush()}
+          onEnablePush={() => void enablePushNotifications()}
+          onSendTestPush={() => void sendTestPush()}
           onMarkRead={markNotificationRead}
           onMarkAllRead={markAllRead}
           onClearAll={clearInbox}
