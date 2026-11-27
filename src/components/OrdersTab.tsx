@@ -49,11 +49,11 @@ interface OrdersTabProps {
 }
 
 export const OrdersTab: React.FC<OrdersTabProps> = ({
-  groupedOrders,
-  cachedOrders,
-  stores,
-  deliveryPartners,
-  timelineTimestamps,
+  groupedOrders = [],
+  cachedOrders = {},
+  stores = {},
+  deliveryPartners = {},
+  timelineTimestamps = {},
   gmpQuotaExceeded,
   brandName,
   allowRiderTip = true,
@@ -74,9 +74,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [openReceiptId, setOpenReceiptId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  const activeGroups = getActiveOrderGroups(groupedOrders);
-  const deliveredOrders = getPastOrdersFromCache(cachedOrders, 'DELIVERED');
-  const cancelledOrders = getPastOrdersFromCache(cachedOrders, 'CANCELLED');
+  const safeGroupedOrders = (groupedOrders || []).filter((g) => g && g.groupKey);
+  const activeGroups = getActiveOrderGroups(safeGroupedOrders);
+  const deliveredOrders = getPastOrdersFromCache(cachedOrders || {}, 'DELIVERED');
+  const cancelledOrders = getPastOrdersFromCache(cachedOrders || {}, 'CANCELLED');
   const basePastOrders =
     orderFilter === 'DELIVERED' ? deliveredOrders : cancelledOrders;
   const filteredPastOrders = filterPastOrdersByQuery(
@@ -187,163 +188,149 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             </div>
           ) : (
             activeGroups.map((group) => {
-            const isMultiStore = group.orders.length > 1;
-            const rider = group.deliveryUid
-              ? deliveryPartners[group.deliveryUid]
-              : null;
-            const derived = deriveGroupOrderStatus(group);
-            const liveRiderLat = group.riderLat || rider?.lat || null;
-            const liveRiderLng = group.riderLng || rider?.lng || null;
-            const riderDist =
-              liveRiderLat && liveRiderLng && group.customerLat
-                ? calculateDistanceKm(
-                    liveRiderLat,
-                    liveRiderLng,
-                    group.customerLat,
-                    group.customerLng
-                  )
+              const isMultiStore = (group.orders || []).length > 1;
+              const rider = group.deliveryUid
+                ? deliveryPartners[group.deliveryUid]
                 : null;
-            const seenStores: Record<string, boolean> = {};
-            const storeMarkers: StoreMarkerInfo[] = [];
-            group.orders.forEach((o, idx) => {
-              if (!o.restaurantId || seenStores[o.restaurantId]) return;
-              seenStores[o.restaurantId] = true;
-              const st = stores[o.restaurantId];
-              if (
-                st &&
-                typeof st.lat === 'number' &&
-                typeof st.lng === 'number'
-              ) {
-                storeMarkers.push({
-                  storeId: o.restaurantId,
-                  name: st.name || `Store ${idx + 1}`,
-                  lat: st.lat,
-                  lng: st.lng,
-                });
-              }
-            });
+              const derived = deriveGroupOrderStatus(group);
+              const liveRiderLat = group.riderLat || rider?.lat || null;
+              const liveRiderLng = group.riderLng || rider?.lng || null;
+              const riderDist =
+                liveRiderLat && liveRiderLng && group.customerLat
+                  ? calculateDistanceKm(
+                      liveRiderLat,
+                      liveRiderLng,
+                      group.customerLat,
+                      group.customerLng
+                    )
+                  : null;
 
-            return (
-              <div key={group.groupKey} className="order-card">
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    borderBottom: '1px dashed var(--border)',
-                    paddingBottom: '0.5rem',
-                    marginBottom: '0.5rem',
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <strong style={{ fontSize: '0.95rem' }}>
-                        #{group.groupKey.slice(-6)}
-                      </strong>
-                      {isMultiStore && (
-                        <span
-                          style={{
-                            background: 'rgba(168,85,247,0.15)',
-                            color: '#9333ea',
-                            fontSize: '0.65rem',
-                            fontWeight: 900,
-                            padding: '2px 7px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          {group.orders.length} STORES
-                        </span>
-                      )}
-                      {group.deliverySlot && group.deliverySlot !== 'EXPRESS_15' && (
-                        <span className="order-slot-pill" data-testid="order-slot-pill">
-                          📅 {group.deliverySlot}
-                        </span>
-                      )}
-                      {Number(group.riderTip || 0) > 0 && (
-                        <span className="order-tip-pill" data-testid="order-tip-pill">
-                          ❤️ Tip ₹{Number(group.riderTip || 0).toFixed(0)}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                      {new Date(group.createdAt).toLocaleTimeString()}
-                    </div>
-                  </div>
-                  <span
+              const seenStores: Record<string, boolean> = {};
+              const storeMarkers: StoreMarkerInfo[] = [];
+              (group.orders || []).forEach((o, idx) => {
+                if (!o || !o.restaurantId || seenStores[o.restaurantId]) return;
+                seenStores[o.restaurantId] = true;
+                const st = stores[o.restaurantId];
+                if (
+                  st &&
+                  typeof st.lat === 'number' &&
+                  typeof st.lng === 'number'
+                ) {
+                  storeMarkers.push({
+                    storeId: o.restaurantId,
+                    name: st.name || `Store ${idx + 1}`,
+                    lat: st.lat,
+                    lng: st.lng,
+                  });
+                }
+              });
+
+              const safeGroupKey = String(group.groupKey || 'ORDER');
+
+              return (
+                <div key={safeGroupKey} className="order-card">
+                  <div
                     style={{
-                      fontSize: '0.72rem',
-                      fontWeight: 900,
-                      background: 'var(--brand-green-light)',
-                      color: 'var(--brand-green)',
-                      padding: '3px 8px',
-                      borderRadius: '10px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      borderBottom: '1px dashed var(--border)',
+                      paddingBottom: '0.5rem',
+                      marginBottom: '0.5rem',
                     }}
                   >
-                    {derived.status}
-                  </span>
-                </div>
-
-                {!derived.isAllDelivered && !derived.isAllCancelled && (() => {
-                  const countdown = computeDeliveryCountdown(
-                    group.placedAt || group.createdAt,
-                    nowMs
-                  );
-                  return (
-                    <div
-                      className={`order-countdown-card ${
-                        countdown.isOverdue || countdown.isFinalStretch ? 'urgent' : ''
-                      }`}
-                      data-testid="order-countdown-timer"
-                    >
-                      <div className="order-countdown-row">
-                        <div className="order-countdown-info">
-                          <div className="order-countdown-icon" aria-hidden="true">
-                            <i className="fa-solid fa-stopwatch" />
-                          </div>
-                          <div>
-                            <div className="order-countdown-title">
-                              {countdown.isOverdue
-                                ? 'Delivery ETA Reached'
-                                : 'Est. Delivery Time'}
-                            </div>
-                            <div className="order-countdown-sub">
-                              {countdown.label}
-                            </div>
-                          </div>
-                        </div>
-                        <div
-                          className="order-countdown-clock"
-                          aria-label={`Estimated delivery time remaining ${countdown.formattedRemaining}`}
-                        >
-                          {countdown.formattedRemaining}
-                        </div>
-                      </div>
+                    <div>
                       <div
-                        className="order-countdown-track"
-                        role="progressbar"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={countdown.progressPercent}
-                        aria-label="15-minute delivery progress"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          flexWrap: 'wrap',
+                        }}
                       >
-                        <div
-                          className="order-countdown-fill"
-                          style={{ width: `${countdown.progressPercent}%` }}
-                        />
+                        <strong style={{ fontSize: '0.95rem' }}>
+                          #{safeGroupKey.slice(-6)}
+                        </strong>
+                        {isMultiStore && (
+                          <span
+                            style={{
+                              background: 'rgba(168,85,247,0.15)',
+                              color: '#9333ea',
+                              fontSize: '0.65rem',
+                              fontWeight: 900,
+                              padding: '2px 7px',
+                              borderRadius: '6px',
+                            }}
+                          >
+                            {(group.orders || []).length} STORES
+                          </span>
+                        )}
+                        {group.deliverySlot && group.deliverySlot !== 'EXPRESS_15' && (
+                          <span className="order-slot-pill">
+                            📅 {group.deliverySlot}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                        {new Date(group.createdAt || Date.now()).toLocaleTimeString()}
                       </div>
                     </div>
-                  );
-                })()}
+                    <span
+                      style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 900,
+                        background: 'var(--brand-green-light)',
+                        color: 'var(--brand-green)',
+                        padding: '3px 8px',
+                        borderRadius: '10px',
+                      }}
+                    >
+                      {derived.status}
+                    </span>
+                  </div>
 
-                {!derived.isAllCancelled ? (
-                  <>
+                  {!derived.isAllDelivered && !derived.isAllCancelled && (() => {
+                    const countdown = computeDeliveryCountdown(
+                      group.placedAt || group.createdAt,
+                      nowMs
+                    );
+                    return (
+                      <div
+                        className={`order-countdown-card ${
+                          countdown.isOverdue || countdown.isFinalStretch ? 'urgent' : ''
+                        }`}
+                      >
+                        <div className="order-countdown-row">
+                          <div className="order-countdown-info">
+                            <div className="order-countdown-icon">
+                              <i className="fa-solid fa-stopwatch" />
+                            </div>
+                            <div>
+                              <div className="order-countdown-title">
+                                {countdown.isOverdue
+                                  ? 'Delivery ETA Reached'
+                                  : 'Est. Delivery Time'}
+                              </div>
+                              <div className="order-countdown-sub">
+                                {countdown.label}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="order-countdown-clock">
+                            {countdown.formattedRemaining}
+                          </div>
+                        </div>
+                        <div className="order-countdown-track">
+                          <div
+                            className="order-countdown-fill"
+                            style={{ width: `${countdown.progressPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {!derived.isAllCancelled ? (
                     <div className="order-stepper">
                       <div
                         className="stepper-progress-fill"
@@ -374,192 +361,117 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                         <span>Delivered</span>
                       </div>
                     </div>
+                  ) : (
+                    <div
+                      style={{
+                        background: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        borderRadius: '12px',
+                        padding: '0.7rem',
+                        margin: '0.75rem 0',
+                        color: 'var(--danger)',
+                        fontSize: '0.82rem',
+                        fontWeight: 700,
+                      }}
+                    >
+                      <i className="fa-solid fa-ban" /> Order Cancelled
+                    </div>
+                  )}
 
-                    {(() => {
-                      const steps = buildOrderStatusTimeline(
-                        group,
-                        timelineTimestamps?.[group.groupKey]
-                      );
+                  {!derived.isAllDelivered &&
+                    !derived.isAllCancelled &&
+                    group.deliveryOtp && (
+                      <DeliveryQrCard
+                        group={group}
+                        allowDeliveryQr={allowDeliveryQr}
+                      />
+                    )}
+
+                  <div style={{ margin: '0.65rem 0' }}>
+                    {(group.orders || []).map((o, idx) => {
+                      if (!o) return null;
+                      const storeName =
+                        stores[o.restaurantId]?.name || `Store ${idx + 1}`;
+                      const raw = Array.isArray(o.items)
+                        ? o.items
+                        : Object.values(o.items || {});
                       return (
                         <div
-                          className="order-timeline-card"
-                          data-testid="order-timeline"
+                          key={o.orderId || idx}
+                          style={{
+                            background: '#f8fafc',
+                            border: '1px solid var(--border)',
+                            borderRadius: '10px',
+                            padding: '0.55rem 0.75rem',
+                            marginBottom: '6px',
+                          }}
                         >
-                          <div className="order-timeline-header">
-                            <span>Live Status Timeline</span>
-                            <span className="order-timeline-stage-tag">
-                              {steps.filter((s) => s.state !== 'pending').length} of {steps.length} milestones
-                            </span>
+                          <div
+                            style={{
+                              fontSize: '0.74rem',
+                              fontWeight: 800,
+                              color: 'var(--brand-green)',
+                            }}
+                          >
+                            <i className="fa-solid fa-store" /> {storeName}
                           </div>
-                          <ol className="order-timeline-list">
-                            {steps.map((step, idx) => (
-                              <li
-                                key={step.key}
-                                className={`order-timeline-step ${step.state}`}
-                                data-testid={`timeline-step-${step.key}`}
-                              >
-                                <div className="order-timeline-rail">
-                                  <span className="order-timeline-dot" aria-hidden="true">
-                                    <i
-                                      className={`fa-solid ${
-                                        step.state === 'completed' ? 'fa-check' : step.icon
-                                      }`}
-                                    />
-                                  </span>
-                                  {idx < steps.length - 1 && (
-                                    <span className="order-timeline-line" aria-hidden="true" />
-                                  )}
-                                </div>
-                                <div className="order-timeline-body">
-                                  <div className="order-timeline-row">
-                                    <strong className="order-timeline-label">
-                                      {step.label}
-                                    </strong>
-                                    <span className="order-timeline-time">
-                                      {step.formattedTime}
-                                    </span>
-                                  </div>
-                                  <div className="order-timeline-detail">
-                                    {step.detail}
-                                  </div>
-                                </div>
-                              </li>
-                            ))}
-                          </ol>
+                          <div style={{ fontSize: '0.78rem', color: '#475569' }}>
+                            {raw.map((i) => i ? `${i.name || 'Item'} × ${i.qty || 1}` : '').filter(Boolean).join(', ')}
+                          </div>
                         </div>
                       );
-                    })()}
-                  </>
-                ) : (
+                    })}
+                  </div>
+
                   <div
                     style={{
-                      background: '#fef2f2',
-                      border: '1px solid #fecaca',
-                      borderRadius: '12px',
-                      padding: '0.7rem',
-                      margin: '0.75rem 0',
-                      color: 'var(--danger)',
-                      fontSize: '0.82rem',
-                      fontWeight: 700,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontWeight: 900,
+                      fontSize: '0.95rem',
+                      margin: '6px 0',
+                      borderTop: '1px dashed var(--border)',
+                      paddingTop: '6px',
                     }}
                   >
-                    <i className="fa-solid fa-ban" /> Order Cancelled
+                    <span>Total ({group.paymentMode || 'COD'}):</span>
+                    <span style={{ color: 'var(--brand-green)' }}>
+                      ₹{Number(group.totalAmount || 0).toFixed(0)}
+                    </span>
                   </div>
-                )}
 
-                {group.emergencyAlert && (
-                  <div
-                    style={{
-                      background: '#fffbeb',
-                      border: '1px solid #fde68a',
-                      borderRadius: '10px',
-                      padding: '0.65rem',
-                      marginBottom: '0.5rem',
-                      fontSize: '0.75rem',
-                      color: '#92400e',
-                      fontWeight: 700,
-                    }}
-                  >
-                    ⚠️ {group.emergencyDetails || 'Temporary road delay'}
+                  <div className="order-receipt-toggle-row">
+                    <button
+                      type="button"
+                      className={`btn btn-outline btn-sm order-receipt-toggle-btn ${
+                        openReceiptId === safeGroupKey ? 'active' : ''
+                      }`}
+                      onClick={() => {
+                        triggerHaptic('tap');
+                        setOpenReceiptId((prev) =>
+                          prev === safeGroupKey ? null : safeGroupKey
+                        );
+                      }}
+                    >
+                      <i className="fa-solid fa-file-invoice" />{' '}
+                      {openReceiptId === safeGroupKey
+                        ? 'Hide Order Receipt'
+                        : 'Order Receipt & PDF'}
+                    </button>
                   </div>
-                )}
 
-                {!derived.isAllDelivered &&
-                  !derived.isAllCancelled &&
-                  group.deliveryOtp && (
-                    <DeliveryQrCard
-                      group={group}
-                      allowDeliveryQr={allowDeliveryQr}
+                  {openReceiptId === safeGroupKey && (
+                    <OrderReceiptCard
+                      receipt={buildOrderReceiptFromGroup(group, stores, derived.status)}
+                      brandName={brandName}
+                      onClose={() => setOpenReceiptId(null)}
                     />
                   )}
 
-                <div style={{ margin: '0.65rem 0' }}>
-                  {group.orders.map((o, idx) => {
-                    const storeName =
-                      stores[o.restaurantId]?.name || `Store ${idx + 1}`;
-                    const raw = Array.isArray(o.items)
-                      ? o.items
-                      : Object.values(o.items || {});
-                    return (
-                      <div
-                        key={o.orderId}
-                        style={{
-                          background: '#f8fafc',
-                          border: '1px solid var(--border)',
-                          borderRadius: '10px',
-                          padding: '0.55rem 0.75rem',
-                          marginBottom: '6px',
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: '0.74rem',
-                            fontWeight: 800,
-                            color: 'var(--brand-green)',
-                          }}
-                        >
-                          <i className="fa-solid fa-store" /> {storeName}
-                        </div>
-                        <div style={{ fontSize: '0.78rem', color: '#475569' }}>
-                          {raw.map((i) => `${i.name} × ${i.qty}`).join(', ')}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontWeight: 900,
-                    fontSize: '0.95rem',
-                    margin: '6px 0',
-                    borderTop: '1px dashed var(--border)',
-                    paddingTop: '6px',
-                  }}
-                >
-                  <span>Total ({group.paymentMode}):</span>
-                  <span style={{ color: 'var(--brand-green)' }}>
-                    ₹{group.totalAmount.toFixed(0)}
-                  </span>
-                </div>
-
-                <div className="order-receipt-toggle-row">
-                  <button
-                    type="button"
-                    className={`btn btn-outline btn-sm order-receipt-toggle-btn ${
-                      openReceiptId === group.groupKey ? 'active' : ''
-                    }`}
-                    aria-expanded={openReceiptId === group.groupKey}
-                    data-testid="toggle-order-receipt-btn"
-                    onClick={() => {
-                      triggerHaptic('tap');
-                      setOpenReceiptId((prev) =>
-                        prev === group.groupKey ? null : group.groupKey
-                      );
-                    }}
-                  >
-                    <i className="fa-solid fa-file-invoice" aria-hidden="true" />{' '}
-                    {openReceiptId === group.groupKey
-                      ? 'Hide Order Receipt'
-                      : 'Order Receipt & PDF'}
-                  </button>
-                </div>
-
-                {openReceiptId === group.groupKey && (
-                  <OrderReceiptCard
-                    receipt={buildOrderReceiptFromGroup(group, stores, derived.status)}
-                    brandName={brandName}
-                    onClose={() => setOpenReceiptId(null)}
-                  />
-                )}
-
-                {!derived.isAllCancelled &&
-                  !derived.isAllDelivered && (
+                  {!derived.isAllCancelled && !derived.isAllDelivered && (
                     <>
                       <RiderMiniMap
-                        groupKey={group.groupKey}
+                        groupKey={safeGroupKey}
                         orderStatus={derived.status}
                         rider={rider}
                         riderLat={liveRiderLat}
@@ -570,152 +482,23 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                         quotaExceeded={gmpQuotaExceeded}
                       />
                       {rider ? (
-                        (() => {
-                          const canComm = isRiderCommunicationEligible(group);
-                          const canonicalOrderId = getCanonicalOrderIdForGroup(group);
-                          const unreadCount =
-                            Number(unreadChatCounts[canonicalOrderId] || 0) ||
-                            Number(unreadChatCounts[group.groupKey] || 0);
-                          const safeRiderPhoto = sanitizeSafeUrl(
-                            rider.photoUrl || rider.imageUrl || '',
-                            true
-                          );
-                          const riderInitial =
-                            (rider.name || 'Rider').trim().charAt(0).toUpperCase() || 'R';
-
-                          return (
-                            <div className="delivery-boy-box">
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                {safeRiderPhoto ? (
-                                  <img
-                                    src={safeRiderPhoto}
-                                    alt={rider.name || 'Rider'}
-                                    style={{
-                                      width: '38px',
-                                      height: '38px',
-                                      borderRadius: '999px',
-                                      objectFit: 'cover',
-                                      border: '2px solid var(--brand-green)',
-                                      flexShrink: 0,
-                                    }}
-                                  />
-                                ) : (
-                                  <div
-                                    aria-hidden="true"
-                                    style={{
-                                      width: '38px',
-                                      height: '38px',
-                                      borderRadius: '999px',
-                                      background: 'var(--brand-green)',
-                                      color: '#fff',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      fontWeight: 900,
-                                      fontSize: '0.92rem',
-                                      flexShrink: 0,
-                                    }}
-                                  >
-                                    {riderInitial}
-                                  </div>
-                                )}
-                                <div>
-                                  <strong style={{ fontSize: '0.85rem' }}>
-                                    <i
-                                      className="fa-solid fa-motorcycle"
-                                      style={{ color: 'var(--brand-green)' }}
-                                    />{' '}
-                                    {rider.name || 'Rider'}
-                                  </strong>
-                                  <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                                    {rider.vehicle || 'Bike'}{' '}
-                                    {riderDist !== null
-                                      ? `• ~${riderDist.toFixed(1)} km away`
-                                      : ''}{' '}
-                                    {rider.lastLocationUpdate
-                                      ? `• Live ${new Date(rider.lastLocationUpdate).toLocaleTimeString()}`
-                                      : ''}
-                                  </div>
-                                </div>
-                              </div>
-                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                {canComm && allowRiderVoiceCall && onCallRider && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-primary btn-sm"
-                                    data-testid="call-rider-inapp-btn"
-                                    aria-label={`Call Rider ${rider.name || 'Rider'} (In-App)`}
-                                    onClick={() => {
-                                      triggerHaptic('tap');
-                                      onCallRider(group);
-                                    }}
-                                  >
-                                    <i className="fa-solid fa-phone" aria-hidden="true" /> Call Rider
-                                  </button>
-                                )}
-                                {canComm && allowRiderChat && onMessageRider && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline btn-sm"
-                                    data-testid="message-rider-inapp-btn"
-                                    aria-label={`Message Rider ${rider.name || 'Rider'}`}
-                                    style={{
-                                      borderColor: 'var(--brand-green)',
-                                      color: 'var(--brand-green)',
-                                      fontWeight: 800,
-                                      position: 'relative',
-                                    }}
-                                    onClick={() => {
-                                      triggerHaptic('tap');
-                                      onMessageRider(group);
-                                    }}
-                                  >
-                                    <i className="fa-solid fa-comment-dots" aria-hidden="true" />{' '}
-                                    Message Rider
-                                    {unreadCount > 0 && (
-                                      <span
-                                        data-testid="rider-chat-unread-badge"
-                                        style={{
-                                          marginLeft: '5px',
-                                          background: '#dc2626',
-                                          color: '#fff',
-                                          borderRadius: '999px',
-                                          padding: '1px 6px',
-                                          fontSize: '0.66rem',
-                                          fontWeight: 900,
-                                        }}
-                                      >
-                                        {unreadCount}
-                                      </span>
-                                    )}
-                                  </button>
-                                )}
-                                {allowRiderTip && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline btn-sm"
-                                    data-testid="active-tip-rider-btn"
-                                    style={{ borderColor: '#f59e0b', color: '#b45309', fontWeight: 800 }}
-                                    onClick={() => onOpenTipRider(group.groupKey)}
-                                  >
-                                    ❤️ Tip Rider
-                                  </button>
-                                )}
-                                {liveRiderLat && liveRiderLng && (
-                                  <a
-                                    href={`https://www.google.com/maps?q=${liveRiderLat},${liveRiderLng}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="btn btn-outline btn-sm"
-                                    style={{ color: 'var(--brand-green)' }}
-                                  >
-                                    <i className="fa-solid fa-location-arrow" /> Live Map
-                                  </a>
-                                )}
-                              </div>
+                        <div className="delivery-boy-box">
+                          <div>
+                            <strong style={{ fontSize: '0.85rem' }}>
+                              <i className="fa-solid fa-motorcycle" style={{ color: 'var(--brand-green)' }} />{' '}
+                              {rider.name || 'Rider'}
+                            </strong>
+                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                              {rider.vehicle || 'Bike'}{' '}
+                              {riderDist !== null ? `• ~${riderDist.toFixed(1)} km away` : ''}
                             </div>
-                          );
-                        })()
+                          </div>
+                          {rider.phone && (
+                            <a href={`tel:${rider.phone}`} className="btn btn-outline btn-sm" style={{ color: 'var(--brand-green)' }}>
+                              <i className="fa-solid fa-phone" /> Call
+                            </a>
+                          )}
+                        </div>
                       ) : (
                         <div
                           style={{
@@ -729,17 +512,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                             gap: '10px',
                           }}
                         >
-                          <i
-                            className="fa-solid fa-satellite-dish fa-spin"
-                            style={{ color: 'var(--brand-green)', fontSize: '1.2rem' }}
-                          />
-                          <div
-                            style={{
-                              fontSize: '0.76rem',
-                              color: '#166534',
-                              fontWeight: 800,
-                            }}
-                          >
+                          <i className="fa-solid fa-satellite-dish fa-spin" style={{ color: 'var(--brand-green)', fontSize: '1.2rem' }} />
+                          <div style={{ fontSize: '0.76rem', color: '#166534', fontWeight: 800 }}>
                             Connecting to nearest delivery rider...
                           </div>
                         </div>
@@ -747,274 +521,74 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                     </>
                   )}
 
-                {derived.isAllDelivered && allowRiderTip && group.deliveryUid && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: '8px',
-                      marginTop: '8px',
-                      flexWrap: 'wrap',
-                    }}
-                  >
+                  {(derived.status === 'PLACED' || derived.status === 'ACCEPTED') && (
                     <button
                       type="button"
                       className="btn btn-outline btn-sm"
-                      data-testid="delivered-tip-rider-btn"
                       style={{
-                        borderColor: '#0c831f',
-                        color: '#0c831f',
+                        color: 'var(--danger)',
+                        borderColor: '#fecaca',
+                        marginTop: '6px',
                       }}
-                      onClick={() => onOpenTipRider(group.groupKey)}
+                      onClick={() => onOpenCancelOrder(safeGroupKey)}
                     >
-                      ❤️ Tip Rider
+                      Cancel Order
                     </button>
-                  </div>
-                )}
-
-                {(derived.status === 'PLACED' || derived.status === 'ACCEPTED') && (
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-sm"
-                    style={{
-                      color: 'var(--danger)',
-                      borderColor: '#fecaca',
-                      marginTop: '6px',
-                    }}
-                    onClick={() => onOpenCancelOrder(group.groupKey)}
-                  >
-                    Cancel Order
-                  </button>
-                )}
-              </div>
-            );
-          })
-        )}
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       ) : (
-        <section
-          className="past-orders-section past-orders-filtered"
-          aria-label={orderFilter === 'DELIVERED' ? 'Delivered Past Orders' : 'Cancelled Past Orders'}
-          data-testid="past-orders-section"
-        >
+        <section className="past-orders-section past-orders-filtered">
           <div className="past-orders-header">
             <h3 className="past-orders-heading">
               {orderFilter === 'DELIVERED' ? 'Delivered Orders' : 'Cancelled Orders'}
             </h3>
-            {basePastOrders.length > 0 && (
-              <span className="past-orders-count" data-testid="past-orders-count">
-                {pastSearchQuery.trim()
-                  ? `${filteredPastOrders.length} of ${basePastOrders.length}`
-                  : filteredPastOrders.length}
-              </span>
-            )}
-          </div>
-
-          <div
-            style={{
-              background: '#f0fdf4',
-              border: '1px solid #bbf7d0',
-              borderRadius: '12px',
-              padding: '8px 12px',
-              marginBottom: '10px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '0.74rem',
-              color: '#166534',
-              fontWeight: 700,
-            }}
-          >
-            <span style={{ fontSize: '1rem' }}>🛡️</span>
-            <span>
-              <strong>30-Day Auto-Retention:</strong> Completed and cancelled order records automatically delete after 30 days for data privacy.
-            </span>
-          </div>
-
-          <div className="past-orders-search-wrap">
-            <i
-              className="fa-solid fa-magnifying-glass past-orders-search-icon"
-              aria-hidden="true"
-            />
-            <input
-              id="past-orders-search"
-              type="text"
-              className="past-orders-search-input"
-              placeholder="Search past orders by store or item..."
-              aria-label="Search past orders by store name or items ordered"
-              data-testid="past-orders-search-input"
-              value={pastSearchQuery}
-              onChange={(e) => setPastSearchQuery(e.target.value)}
-            />
-            {pastSearchQuery && (
-              <button
-                type="button"
-                className="past-orders-search-clear"
-                aria-label="Clear past orders search"
-                data-testid="past-orders-search-clear"
-                onClick={() => setPastSearchQuery('')}
-              >
-                <i className="fa-solid fa-xmark" aria-hidden="true" />
-              </button>
-            )}
           </div>
 
           {filteredPastOrders.length === 0 ? (
-            <div className="orders-empty-card" data-testid="orders-empty-past">
-              <p className="orders-empty-text">
-                {pastSearchQuery.trim() && basePastOrders.length > 0
-                  ? `No ${orderFilter.toLowerCase()} orders matching "${pastSearchQuery.trim()}".`
-                  : orderFilter === 'DELIVERED'
-                    ? 'No delivered orders yet.'
-                    : 'No cancelled orders yet.'}
-              </p>
-              {pastSearchQuery.trim() && basePastOrders.length > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  style={{
-                    borderColor: 'var(--brand-green)',
-                    color: 'var(--brand-green)',
-                    marginTop: '0.6rem',
-                  }}
-                  onClick={() => setPastSearchQuery('')}
-                >
-                  Clear Search
-                </button>
-              )}
+            <div className="orders-empty-card">
+              <p className="orders-empty-text">No orders in this section.</p>
             </div>
           ) : (
             <ul className="past-orders-list">
               {filteredPastOrders.map((order) => {
+                if (!order) return null;
                 const rawItems = Array.isArray(order.items)
                   ? order.items
                   : Object.values(order.items || {});
-                const firstItemStoreName = rawItems[0]?.storeName;
-                const storeName =
-                  stores[order.restaurantId]?.name ||
-                  firstItemStoreName ||
-                  'Local Store';
+                const storeName = stores[order.restaurantId]?.name || 'Local Store';
                 const normalizedStatus = normalizeOrderStatus(order.status);
                 const isDelivered = normalizedStatus === 'DELIVERED';
-                const dateLabel = order.createdAt
-                  ? new Date(order.createdAt).toLocaleString([], {
-                      day: 'numeric',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })
-                  : '';
 
                 return (
-                  <li
-                    key={order.orderId}
-                    className="past-order-item"
-                    data-testid="past-order-row"
-                  >
+                  <li key={order.orderId} className="past-order-item">
                     <div className="past-order-top">
                       <div className="past-order-store">
-                        <i className="fa-solid fa-store" aria-hidden="true" />
+                        <i className="fa-solid fa-store" />
                         <span>{storeName}</span>
                       </div>
-                      <span
-                        className={`past-status-badge ${
-                          isDelivered ? 'delivered' : 'cancelled'
-                        }`}
-                      >
+                      <span className={`past-status-badge ${isDelivered ? 'delivered' : 'cancelled'}`}>
                         {normalizedStatus}
                       </span>
                     </div>
                     <div className="past-order-items">
-                      {rawItems.length > 0
-                        ? rawItems.map((item) => `${item.name} × ${item.qty}`).join(', ')
-                        : `Order #${order.orderId.slice(-6)}`}
+                      {rawItems.map((item) => item ? `${item.name} × ${item.qty}` : '').filter(Boolean).join(', ')}
                     </div>
                     <div className="past-order-meta">
                       <span className="past-order-meta-text">
-                        #{order.orderId.slice(-6)}
-                        {dateLabel ? ` • ${dateLabel}` : ''}
-                        {order.paymentMode ? ` • ${order.paymentMode}` : ''}
-                        {order.deliverySlot && order.deliverySlot !== 'EXPRESS_15'
-                          ? ` • ${order.deliverySlot}`
-                          : ''}
-                        {' • '}
-                        <span
-                          title="This record will automatically delete after 30 days"
-                          style={{ color: '#059669', fontWeight: 600 }}
-                        >
-                          Auto-purges: {getAutoPurgeDateLabel(order.placedAt || order.createdAt)}
-                        </span>
+                        #{order.orderId.slice(-6)} • ₹{Number(order.totalAmount || 0).toFixed(0)}
                       </span>
-                      <div className="past-order-actions">
-                        <span className="past-order-amount">
-                          ₹{Number(order.totalAmount || 0).toFixed(0)}
-                        </span>
-                        <button
-                          type="button"
-                          className={`btn btn-outline btn-sm past-receipt-btn ${
-                            openReceiptId === order.orderId ? 'active' : ''
-                          }`}
-                          aria-label={`View receipt for ${storeName} (#${order.orderId.slice(-6)})`}
-                          aria-expanded={openReceiptId === order.orderId}
-                          data-testid="past-order-receipt-btn"
-                          onClick={() => {
-                            triggerHaptic('tap');
-                            setOpenReceiptId((prev) =>
-                              prev === order.orderId ? null : order.orderId
-                            );
-                          }}
-                        >
-                          <i className="fa-solid fa-file-invoice" aria-hidden="true" />{' '}
-                          Receipt
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm past-reorder-btn"
-                          aria-label={`Reorder from ${storeName} (#${order.orderId.slice(-6)})`}
-                          onClick={() => onReorderOrder(order)}
-                        >
-                          <i className="fa-solid fa-rotate-right" aria-hidden="true" />{' '}
-                          Reorder
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm past-reorder-btn"
+                        onClick={() => onReorderOrder(order)}
+                      >
+                        <i className="fa-solid fa-rotate-right" /> Reorder
+                      </button>
                     </div>
-                    <div className="past-order-extra-actions">
-                      {order.refundStatus && order.refundStatus !== 'NONE' ? (
-                        <span
-                          className={`past-refund-badge ${
-                            order.refundStatus === 'APPROVED'
-                              ? 'approved'
-                              : order.refundStatus === 'REJECTED'
-                                ? 'rejected'
-                                : ''
-                          }`}
-                          data-testid={`refund-badge-${order.orderId}`}
-                        >
-                          💸 REFUND {order.refundStatus}
-                        </span>
-                      ) : allowRefundRequests ? (
-                        <button
-                          type="button"
-                          className="btn btn-outline btn-sm past-refund-btn"
-                          data-testid={`past-refund-btn-${order.orderId}`}
-                          onClick={() => onOpenRefundOrder(order)}
-                        >
-                          <i className="fa-solid fa-rotate-left" aria-hidden="true" />{' '}
-                          Request Refund
-                        </button>
-                      ) : null}
-                      {Number(order.riderTip || 0) > 0 && (
-                        <span className="order-tip-pill">
-                          ❤️ Tip ₹{Number(order.riderTip || 0).toFixed(0)}
-                        </span>
-                      )}
-                    </div>
-                    {openReceiptId === order.orderId && (
-                      <OrderReceiptCard
-                        receipt={buildOrderReceiptFromOrder(order, stores)}
-                        brandName={brandName}
-                        onClose={() => setOpenReceiptId(null)}
-                      />
-                    )}
                   </li>
                 );
               })}
