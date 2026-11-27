@@ -90,6 +90,9 @@ jobs:
       # =========================================================================
       - name: Set Chutki App Logo Icons
         run: |
+          # ImageMagick install karein taaki 'convert' command chal sake
+          sudo apt-get update -y && sudo apt-get install -y imagemagick
+
           SRC_ICON="public/assets/aistudio/IMG-20261115-WA0008_6f19703a.jpg"
           if [ ! -f "$SRC_ICON" ]; then
             SRC_ICON="public/pwa-512x512.png"
@@ -123,7 +126,7 @@ jobs:
           convert "$SRC_ICON" -resize 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_round.png"
           convert "$SRC_ICON" -resize 432x432 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_foreground.png"
 
-          # Set adaptive icon background color to brand green
+          # Adaptive icon background color ko brand green karein
           sed -i 's/<color name="colorPrimary">.*<\/color>/<color name="colorPrimary">#0c831f<\/color>/' "$RES_DIR/values/colors.xml" || true
 
           echo "✅ Chutki App Icon successfully applied to Android APK!"
