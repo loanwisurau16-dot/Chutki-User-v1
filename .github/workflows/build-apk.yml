@@ -27,7 +27,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # Runner ke built-in Android SDK licenses accept karein
       - name: Accept Android SDK Licenses
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
@@ -44,10 +43,19 @@ jobs:
         run: |
           npm run build
 
-      - name: Initialize Capacitor Android Project
+      - name: Configure Capacitor with JSON (Avoids TS7 Bug)
         run: |
+          # TypeScript 7 crash se bachne ke liye JSON configuration use karein
+          rm -f capacitor.config.ts
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.chutki.user",
+            "appName": "Chutki",
+            "webDir": "dist"
+          }
+          EOF
+
           if [ ! -d "android" ]; then
-            npx cap init "Chutki" "com.chutki.user" --web-dir "dist"
             npx cap add android
           fi
 
