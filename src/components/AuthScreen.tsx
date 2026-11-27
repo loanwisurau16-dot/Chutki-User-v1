@@ -324,7 +324,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       let idToken: string | undefined;
 
       if (isNativeApk) {
-        // Android APK ke andar Native Google Play Services Account Chooser run karein
+        // Native Google Play Services Account Chooser on Android Phone
         const { GoogleAuth } = await import('@codetrix-studio/capacitor-google-auth');
         GoogleAuth.initialize({
           clientId: GOOGLE_WEB_CLIENT_ID,
