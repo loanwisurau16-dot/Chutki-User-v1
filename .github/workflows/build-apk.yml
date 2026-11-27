@@ -31,9 +31,13 @@ jobs:
         run: |
           npm install --legacy-peer-deps
 
-      - name: Install Capacitor v6 & Native Google Auth Plugin
+      - name: Install Capacitor Plugins (Google Auth, GPS, Notifications & Voice)
         run: |
-          npm install @capacitor/core@^6.2.0 @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0 @codetrix-studio/capacitor-google-auth@^3.3.6 --legacy-peer-deps
+          npm install @capacitor/core@^6.2.0 @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0 \
+            @codetrix-studio/capacitor-google-auth@^3.3.6 \
+            @capacitor/geolocation@^6.0.0 \
+            @capacitor/local-notifications@^6.0.0 \
+            @capacitor-community/speech-recognition@^6.0.0 --legacy-peer-deps
 
       - name: Build Vite React Web App
         run: |
@@ -52,12 +56,21 @@ jobs:
                 "scopes": ["profile", "email"],
                 "serverClientId": "396740286096-qpdnc5g4ja1jv7p7i04dns4or9dvpc3n.apps.googleusercontent.com",
                 "forceCodeForRefreshToken": true
+              },
+              "LocalNotifications": {
+                "smallIcon": "ic_stat_icon",
+                "iconColor": "#0c831f",
+                "sound": "beep.wav"
               }
             }
           }
           EOF
           npx cap add android
           npx cap sync android
+
+      - name: Add Android Native Permissions (GPS, Notifications, Microphone)
+        run: |
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-feature android:name="android.hardware.location.gps" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />' android/app/src/main/AndroidManifest.xml
 
       - name: Configure Android strings.xml for Google Sign-In
         run: |
@@ -83,8 +96,7 @@ jobs:
           cd android
           ./gradlew assembleDebug -x lint -x test --no-daemon
 
-      # Build hone ke baad Gradle se exact SHA-1 print karwayein
-      - name: Print Exact APK SHA-1 Fingerprint
+      - name: Print Debug SHA-1 Fingerprint
         run: |
           cd android
           ./gradlew signingReport | grep -A 5 "Variant: debug" || true
