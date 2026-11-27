@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
   sendPasswordResetEmail,
+  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
 } from 'firebase/auth';
@@ -20,6 +21,9 @@ import {
 } from '../utils/security';
 import { triggerHaptic } from '../utils/haptics';
 import { PWAInstallButton } from './PWAControls';
+
+const GOOGLE_WEB_CLIENT_ID =
+  '396740286096-qpdnc5g4ja1jv7p7i04dns4or9dvpc3n.apps.googleusercontent.com';
 
 const AUTH_GUARD_KEY = 'gb_auth_guard';
 
@@ -263,7 +267,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             }
           }
         } catch {
-          // Ignore referral lookup failure when security rules restrict listing /customers
+          // Ignore referral lookup failure
         }
       }
 
@@ -308,80 +312,79 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const handleGoogleSignIn = async () => {
     setAuthError('');
     triggerHaptic('tap');
+    setIsSubmitting(true);
 
-    // Android APK (Capacitor WebView) detect karein
     const isNativeApk =
       (typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
         Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())) ||
       window.location.protocol === 'capacitor:' ||
       window.location.hostname === 'localhost';
 
-    // Android APK me Google Web Popup Android security ki wajah se Chrome par blank reh jata hai
-    if (isNativeApk) {
-      triggerHaptic('warning');
-      setAuthError(
-        '⚠️ APK ke andar Google Web popup block hota hai. Kripya upar "Create Account" ya "Sign In" par tap karke Email & Password se login karein (Yeh turant login ho jayega!).'
-      );
-      showToast('Kripya Email & Password se Sign In karein', 'info');
-      return;
-    }
-
-    setIsSubmitting(true);
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        reject(new Error('google-auth-timeout'));
-      }, 15000);
-    });
-
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
+      let idToken: string | undefined;
 
-      const cred = await Promise.race([
-        signInWithPopup(auth, provider),
-        timeoutPromise,
-      ]);
-
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-
-      const user = cred.user;
-      const uid = user.uid;
-      const custRef = ref(db, `customers/${uid}`);
-      const snap = await get(custRef);
-
-      if (!snap.exists()) {
-        const myRefCode = 'GB' + uid.slice(0, 6).toUpperCase();
-        const fallbackName = sanitizeInputBounded(
-          user.displayName || user.email?.split('@')[0] || 'Gossaigaon Customer',
-          80
-        );
-        await set(custRef, {
-          name: fallbackName,
-          email: sanitizeInputBounded(user.email || '', 120),
-          phone: sanitizeInputBounded((user.phoneNumber || '').replace(/\D/g, '').slice(-10), 10),
-          address: sanitizeInputBounded(signupAddress || '', 200),
-          lat: detectedLat || null,
-          lng: detectedLng || null,
-          locationLink: detectedLocationLink || '',
-          referralCode: myRefCode,
-          referredBy: '',
-          walletBalance: 0,
-          blocked: false,
-          createdAt: Date.now(),
+      if (isNativeApk) {
+        // Android APK ke andar Native Google Play Services Account Chooser run karein
+        const { GoogleAuth } = await import('@codetrix-studio/capacitor-google-auth');
+        GoogleAuth.initialize({
+          clientId: GOOGLE_WEB_CLIENT_ID,
+          scopes: ['profile', 'email'],
+          grantOfflineAccess: true,
         });
+        const googleUser = await GoogleAuth.signIn();
+        idToken = googleUser?.authentication?.idToken;
+
+        if (!idToken) {
+          throw new Error('Google token receive nahi hua. Kripya dobara koshish karein.');
+        }
+
+        const credential = GoogleAuthProvider.credential(idToken);
+        await signInWithCredential(auth, credential);
+      } else {
+        // Desktop / PWA Web Browser Popup
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: 'select_account' });
+        await signInWithPopup(auth, provider);
       }
 
-      triggerHaptic('success');
-      showToast(`👋 Welcome ${user.displayName || 'back'}!`, 'success');
-    } catch (err) {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
+      const user = auth.currentUser;
+      if (user) {
+        const uid = user.uid;
+        const custRef = ref(db, `customers/${uid}`);
+        const snap = await get(custRef);
+
+        if (!snap.exists()) {
+          const myRefCode = 'GB' + uid.slice(0, 6).toUpperCase();
+          const fallbackName = sanitizeInputBounded(
+            user.displayName || user.email?.split('@')[0] || 'Gossaigaon Customer',
+            80
+          );
+          await set(custRef, {
+            name: fallbackName,
+            email: sanitizeInputBounded(user.email || '', 120),
+            phone: sanitizeInputBounded((user.phoneNumber || '').replace(/\D/g, '').slice(-10), 10),
+            address: sanitizeInputBounded(signupAddress || '', 200),
+            lat: detectedLat || null,
+            lng: detectedLng || null,
+            locationLink: detectedLocationLink || '',
+            referralCode: myRefCode,
+            referredBy: '',
+            walletBalance: 0,
+            blocked: false,
+            createdAt: Date.now(),
+          });
+        }
+
+        triggerHaptic('success');
+        showToast(`👋 Welcome ${user.displayName || 'back'}!`, 'success');
+      }
+    } catch (err: unknown) {
       triggerHaptic('error');
       const errStr = String(err instanceof Error ? err.message : err || '');
 
-      if (errStr.includes('google-auth-timeout')) {
+      if (errStr.includes('10') || errStr.includes('DEVELOPER_ERROR')) {
         setAuthError(
-          'Google login respond nahi kar raha. Kripya upar Email & Password se login karein.'
+          'Firebase Console me SHA-1 fingerprint add karein (Error 10), ya upar Email & Password se login karein.'
         );
       } else if (errStr.includes('popup-closed')) {
         setAuthError('Google sign-in popup band kar diya gaya tha.');
@@ -389,7 +392,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         setAuthError(mapAuthErrorSafe(err, 'google'));
       }
     } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
       setIsSubmitting(false);
     }
   };
