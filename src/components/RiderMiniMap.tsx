@@ -69,50 +69,53 @@ const MapViewportAndPolylines: React.FC<MapOverlayProps> = ({
 }) => {
   const map = useMap();
   const mapsLib = useMapsLibrary('maps');
-  const coreLib = useMapsLibrary('core');
   const trailLineRef = useRef<PolylineHandle | null>(null);
   const targetLineRef = useRef<PolylineHandle | null>(null);
 
   useEffect(() => {
     if (!map || !mapsLib) return;
-    const PolylineCtor = mapsLib.Polyline as unknown as new (
-      opts: Record<string, unknown>
-    ) => PolylineHandle;
+    try {
+      const PolylineCtor = mapsLib.Polyline as unknown as new (
+        opts: Record<string, unknown>
+      ) => PolylineHandle;
 
-    if (!trailLineRef.current) {
-      trailLineRef.current = new PolylineCtor({
-        strokeColor: '#0c831f',
-        strokeOpacity: 0.9,
-        strokeWeight: 4,
-        map,
-      });
-    }
-    trailLineRef.current.setPath(trail);
+      if (!trailLineRef.current) {
+        trailLineRef.current = new PolylineCtor({
+          strokeColor: '#0c831f',
+          strokeOpacity: 0.9,
+          strokeWeight: 4,
+          map,
+        });
+      }
+      trailLineRef.current.setPath(trail);
 
-    if (!targetLineRef.current) {
-      targetLineRef.current = new PolylineCtor({
-        strokeColor: '#0f172a',
-        strokeOpacity: 0,
-        strokeWeight: 2,
-        icons: [
-          {
-            icon: {
-              path: 'M 0,-1 0,1',
-              strokeOpacity: 0.55,
-              scale: 2.6,
+      if (!targetLineRef.current) {
+        targetLineRef.current = new PolylineCtor({
+          strokeColor: '#0f172a',
+          strokeOpacity: 0,
+          strokeWeight: 2,
+          icons: [
+            {
+              icon: {
+                path: 'M 0,-1 0,1',
+                strokeOpacity: 0.55,
+                scale: 2.6,
+              },
+              offset: '0',
+              repeat: '12px',
             },
-            offset: '0',
-            repeat: '12px',
-          },
-        ],
-        map,
-      });
-    }
+          ],
+          map,
+        });
+      }
 
-    if (riderPoint && customerPoint) {
-      targetLineRef.current.setPath([riderPoint, customerPoint]);
-    } else {
-      targetLineRef.current.setPath([]);
+      if (riderPoint && customerPoint) {
+        targetLineRef.current.setPath([riderPoint, customerPoint]);
+      } else {
+        targetLineRef.current.setPath([]);
+      }
+    } catch {
+      // safe fallback
     }
   }, [map, mapsLib, trail, riderPoint, customerPoint]);
 
@@ -126,24 +129,31 @@ const MapViewportAndPolylines: React.FC<MapOverlayProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!map || !coreLib) return;
+    if (!map) return;
     if (!autoFollow && fitSignal === 0) return;
 
-    const pts: GeoPoint[] = [];
-    if (riderPoint) pts.push(riderPoint);
-    if (customerPoint) pts.push(customerPoint);
-    storeMarkers.forEach((s) => pts.push({ lat: s.lat, lng: s.lng }));
+    try {
+      const pts: GeoPoint[] = [];
+      if (riderPoint) pts.push(riderPoint);
+      if (customerPoint) pts.push(customerPoint);
+      storeMarkers.forEach((s) => pts.push({ lat: s.lat, lng: s.lng }));
 
-    if (pts.length === 0) return;
-    if (pts.length === 1) {
-      map.panTo(pts[0]);
-      return;
+      if (pts.length === 0) return;
+      if (pts.length === 1) {
+        map.panTo(pts[0]);
+        return;
+      }
+
+      const googleMapsGlobal = (window as unknown as { google?: { maps?: { LatLngBounds?: new () => any } } }).google?.maps;
+      if (googleMapsGlobal?.LatLngBounds) {
+        const bounds = new googleMapsGlobal.LatLngBounds();
+        pts.forEach((pt) => bounds.extend(pt));
+        map.fitBounds(bounds, { top: 42, right: 36, bottom: 44, left: 36 });
+      }
+    } catch {
+      // safe
     }
-
-    const bounds = new coreLib.LatLngBounds();
-    pts.forEach((pt) => bounds.extend(pt));
-    map.fitBounds(bounds, { top: 42, right: 36, bottom: 44, left: 36 });
-  }, [map, coreLib, riderPoint, customerPoint, storeMarkers, fitSignal, autoFollow]);
+  }, [map, riderPoint, customerPoint, storeMarkers, fitSignal, autoFollow]);
 
   return null;
 };
@@ -265,9 +275,6 @@ const GoogleMapCanvas: React.FC<GoogleMapCanvasProps> = ({
                   {riderDistKm !== null ? ` • ${riderDistKm.toFixed(2)} km` : ''}
                   {etaMinutes !== null ? ` • ~${etaMinutes} min` : ''}
                 </div>
-                <div style={{ color: '#64748b', fontSize: '0.68rem', marginTop: '2px' }}>
-                  {riderPoint.lat.toFixed(5)}, {riderPoint.lng.toFixed(5)}
-                </div>
               </div>
             </InfoWindow>
           )}
@@ -353,22 +360,6 @@ const CoordinateRadarVisualizer: React.FC<RadarVisualizerProps> = ({
         <rect width={width} height={height} fill="#eef4f1" />
         <rect width={width} height={height} fill={`url(#${roadGridId})`} />
 
-        {/* Stylized local road arterial lines */}
-        <path
-          d={`M 0 ${height * 0.72} Q ${width * 0.42} ${height * 0.52}, ${width} ${height * 0.25}`}
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="8"
-          strokeLinecap="round"
-        />
-        <path
-          d={`M ${width * 0.18} 0 Q ${width * 0.5} ${height * 0.48}, ${width * 0.82} ${height}`}
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="6"
-          strokeLinecap="round"
-        />
-
         {/* Route line from rider to customer */}
         {riderPx && customerPx && (
           <line
@@ -383,21 +374,7 @@ const CoordinateRadarVisualizer: React.FC<RadarVisualizerProps> = ({
           />
         )}
 
-        {/* Store to rider path */}
-        {storePxList[0] && riderPx && (
-          <line
-            x1={storePxList[0].pt.x}
-            y1={storePxList[0].pt.y}
-            x2={riderPx.x}
-            y2={riderPx.y}
-            stroke="#0c831f"
-            strokeOpacity="0.35"
-            strokeWidth="2.5"
-            strokeDasharray="3 4"
-          />
-        )}
-
-        {/* Traveled GPS breadcrumb trail */}
+        {/* Traveled GPS trail */}
         {trail.length > 1 && (
           <polyline
             fill="none"
@@ -409,34 +386,6 @@ const CoordinateRadarVisualizer: React.FC<RadarVisualizerProps> = ({
           />
         )}
 
-        {/* Breadcrumb dots */}
-        {trail.slice(0, -1).map((pt, idx) => {
-          const p = projectToViewport(pt, bounds, width, height, pad);
-          return (
-            <circle
-              key={`${pt.lat}_${pt.lng}_${idx}`}
-              cx={p.x}
-              cy={p.y}
-              r="2.4"
-              fill="#0c831f"
-              opacity={0.45 + (idx / Math.max(1, trail.length)) * 0.45}
-            />
-          );
-        })}
-
-        {/* Customer proximity ring */}
-        {customerPx && (
-          <circle
-            cx={customerPx.x}
-            cy={customerPx.y}
-            r="22"
-            fill={`url(#${radarGlowId})`}
-            stroke="#0c831f"
-            strokeOpacity="0.22"
-            strokeDasharray="3 3"
-          />
-        )}
-
         {/* Store pin(s) */}
         {storePxList.map((s) => (
           <g
@@ -445,61 +394,35 @@ const CoordinateRadarVisualizer: React.FC<RadarVisualizerProps> = ({
             className="minimap-svg-transition"
           >
             <circle r="13" fill="#ffffff" stroke="#0c831f" strokeWidth="2" />
-            <text
-              x="0"
-              y="4"
-              textAnchor="middle"
-              fontSize="12"
-            >
+            <text x="0" y="4" textAnchor="middle" fontSize="12">
               🏪
             </text>
           </g>
         ))}
 
-        {/* Customer doorstep pin */}
+        {/* Customer pin */}
         {customerPx && (
           <g
             transform={`translate(${customerPx.x}, ${customerPx.y})`}
             className="minimap-svg-transition"
           >
             <circle r="14" fill="#0f172a" stroke="#ffffff" strokeWidth="2" />
-            <text
-              x="0"
-              y="4.5"
-              textAnchor="middle"
-              fontSize="12"
-            >
+            <text x="0" y="4.5" textAnchor="middle" fontSize="12">
               🏠
             </text>
           </g>
         )}
 
-        {/* Live animated rider pin */}
+        {/* Rider pin */}
         {riderPx && (
           <g
             transform={`translate(${riderPx.x}, ${riderPx.y})`}
             className="minimap-svg-transition"
             data-testid="minimap-rider-marker"
           >
-            <circle r="21" fill="#0c831f" opacity="0.18">
-              <animate
-                attributeName="r"
-                values="14;24;14"
-                dur="1.8s"
-                repeatCount="indefinite"
-              />
-              <animate
-                attributeName="opacity"
-                values="0.32;0.05;0.32"
-                dur="1.8s"
-                repeatCount="indefinite"
-              />
-            </circle>
+            <circle r="21" fill="#0c831f" opacity="0.18" />
             <g transform={`rotate(${Math.round(bearingDeg)})`}>
-              <polygon
-                points="0,-20 5,-11 -5,-11"
-                fill="#0c831f"
-              />
+              <polygon points="0,-20 5,-11 -5,-11" fill="#0c831f" />
             </g>
             <circle r="14" fill="#0c831f" stroke="#ffffff" strokeWidth="2.5" />
             <text x="0" y="4.5" textAnchor="middle" fontSize="13">
@@ -509,7 +432,6 @@ const CoordinateRadarVisualizer: React.FC<RadarVisualizerProps> = ({
         )}
       </svg>
 
-      {/* Legend pills inside radar */}
       <div className="minimap-legend-overlay">
         <span className="minimap-legend-item">🏪 Store</span>
         <span className="minimap-legend-item">🛵 Rider</span>
@@ -555,7 +477,7 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
   );
 
   const validStores = useMemo(
-    () => storeMarkers.filter((s) => isValidCoord(s.lat, s.lng)),
+    () => (storeMarkers || []).filter((s) => s && isValidCoord(s.lat, s.lng)),
     [storeMarkers]
   );
 
@@ -564,7 +486,6 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
     setTrail([]);
   }, [groupKey]);
 
-  // Track movement trail history and heading angle as live rider lat/lng updates
   useEffect(() => {
     if (!riderPoint) return;
     setTrail((prev) => appendTrailPoint(prev, riderPoint));
@@ -623,9 +544,8 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
   return (
     <div
       className="rider-minimap-card"
-      data-testid={`rider-minimap-${groupKey}`}
+      data-testid={`rider-minimap-${groupKey || 'active'}`}
     >
-      {/* Top live header bar */}
       <div className="rider-minimap-header">
         <div className="rider-minimap-title-group">
           <span className="rider-live-dot" />
@@ -635,7 +555,7 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
           <span className="rider-minimap-eta">
             {etaMinutes !== null && riderDistKm !== null
               ? `~${etaMinutes} min • ${riderDistKm.toFixed(2)} km`
-              : orderStatus.replace(/_/g, ' ')}
+              : (orderStatus || 'IN PROGRESS').replace(/_/g, ' ')}
           </span>
         </div>
 
@@ -646,11 +566,8 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
               className="minimap-ctrl-btn"
               onClick={() => setPreferRadar((v) => !v)}
               title={preferRadar ? 'Switch to Google Map' : 'Switch to Radar View'}
-              aria-label={preferRadar ? 'Switch to Google Map' : 'Switch to Radar View'}
             >
-              <i
-                className={`fa-solid ${preferRadar ? 'fa-map-location-dot' : 'fa-compass'}`}
-              />
+              <i className={`fa-solid ${preferRadar ? 'fa-map-location-dot' : 'fa-compass'}`} />
             </button>
           )}
           <button
@@ -661,7 +578,6 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
               setFitSignal((c) => c + 1);
             }}
             title="Recenter Map"
-            aria-label="Recenter Map"
           >
             <i className="fa-solid fa-crosshairs" />
           </button>
@@ -670,19 +586,13 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
             className="minimap-ctrl-btn"
             onClick={() => setExpanded((v) => !v)}
             title={expanded ? 'Compact Map' : 'Expand Map'}
-            aria-label={expanded ? 'Compact Map' : 'Expand Map'}
           >
-            <i
-              className={`fa-solid ${expanded ? 'fa-compress' : 'fa-expand'}`}
-            />
+            <i className={`fa-solid ${expanded ? 'fa-compress' : 'fa-expand'}`} />
           </button>
         </div>
       </div>
 
-      {/* Map / Visualizer Canvas with explicit CSS height */}
-      <div
-        className={`rider-minimap-viewport ${expanded ? 'expanded' : ''}`}
-      >
+      <div className={`rider-minimap-viewport ${expanded ? 'expanded' : ''}`}>
         {canUseGoogleMap ? (
           <APIProvider
             apiKey={MAPS_API_KEY}
@@ -718,9 +628,8 @@ export const RiderMiniMap: React.FC<RiderMiniMapProps> = ({
         )}
       </div>
 
-      {/* Real-time Coordinate Telemetry Strip */}
       <div className="rider-minimap-footer">
-        <span data-testid="rider-coords-readout">
+        <span>
           {riderPoint ? (
             <>
               <i className="fa-solid fa-satellite-dish" />{' '}
