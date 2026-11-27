@@ -27,7 +27,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # Maven Central 429 Too Many Requests se bachne ke liye Google Mirror configure karein
+      # Maven Central 429 Too Many Requests bypass via Google Mirror
       - name: Configure Gradle Maven Mirror
         run: |
           mkdir -p ~/.gradle
@@ -75,7 +75,7 @@ jobs:
                 "forceCodeForRefreshToken": true
               },
               "LocalNotifications": {
-                "smallIcon": "ic_stat_icon",
+                "smallIcon": "ic_launcher_round",
                 "iconColor": "#0c831f",
                 "sound": "beep.wav"
               }
@@ -84,6 +84,49 @@ jobs:
           EOF
           npx cap add android
           npx cap sync android
+
+      # =========================================================================
+      # CHUTKI LOGO KO ANDROID APP ICON (MIPMAPS) ME AUTOMATICALLY CONVERT KAREIN
+      # =========================================================================
+      - name: Set Chutki App Logo Icons
+        run: |
+          SRC_ICON="public/assets/aistudio/IMG-20261115-WA0008_6f19703a.jpg"
+          if [ ! -f "$SRC_ICON" ]; then
+            SRC_ICON="public/pwa-512x512.png"
+          fi
+          echo "Setting Chutki App Icon from: $SRC_ICON"
+
+          RES_DIR="android/app/src/main/res"
+
+          # mdpi (48x48, foreground 108x108)
+          convert "$SRC_ICON" -resize 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher_round.png"
+          convert "$SRC_ICON" -resize 108x108 "$RES_DIR/mipmap-mdpi/ic_launcher_foreground.png"
+
+          # hdpi (72x72, foreground 162x162)
+          convert "$SRC_ICON" -resize 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher_round.png"
+          convert "$SRC_ICON" -resize 162x162 "$RES_DIR/mipmap-hdpi/ic_launcher_foreground.png"
+
+          # xhdpi (96x96, foreground 216x216)
+          convert "$SRC_ICON" -resize 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher_round.png"
+          convert "$SRC_ICON" -resize 216x216 "$RES_DIR/mipmap-xhdpi/ic_launcher_foreground.png"
+
+          # xxhdpi (144x144, foreground 324x324)
+          convert "$SRC_ICON" -resize 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher_round.png"
+          convert "$SRC_ICON" -resize 324x324 "$RES_DIR/mipmap-xxhdpi/ic_launcher_foreground.png"
+
+          # xxxhdpi (192x192, foreground 432x432)
+          convert "$SRC_ICON" -resize 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_round.png"
+          convert "$SRC_ICON" -resize 432x432 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_foreground.png"
+
+          # Set adaptive icon background color to brand green
+          sed -i 's/<color name="colorPrimary">.*<\/color>/<color name="colorPrimary">#0c831f<\/color>/' "$RES_DIR/values/colors.xml" || true
+
+          echo "✅ Chutki App Icon successfully applied to Android APK!"
 
       - name: Add Android Native Permissions (GPS, Notification, Microphone)
         run: |
