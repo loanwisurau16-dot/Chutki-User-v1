@@ -48,9 +48,10 @@ jobs:
         run: |
           npm install --legacy-peer-deps
 
-      - name: Install Capacitor Plugins
+      - name: Install Capacitor Plugins (Including @capacitor/app for Back Button)
         run: |
           npm install @capacitor/core@^6.2.0 @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0 \
+            @capacitor/app@^6.0.0 \
             @codetrix-studio/capacitor-google-auth@^3.3.6 \
             @capacitor/geolocation@^6.0.0 \
             @capacitor/local-notifications@^6.0.0 \
@@ -129,14 +130,13 @@ jobs:
           sed -i 's/<color name="colorPrimary">.*<\/color>/<color name="colorPrimary">#0c831f<\/color>/' "$RES_DIR/values/colors.xml" || true
 
       # =========================================================================
-      # 2. CHUTKI NOTIFICATION MONOCHROME STATUS BAR ICON (Replaces '(i)' fallback)
+      # 2. CHUTKI NOTIFICATION MONOCHROME STATUS BAR ICON
       # =========================================================================
       - name: Generate Chutki Notification Icon
         run: |
           RES_DIR="android/app/src/main/res"
           mkdir -p "$RES_DIR/drawable" "$RES_DIR/drawable-mdpi" "$RES_DIR/drawable-hdpi" "$RES_DIR/drawable-xhdpi" "$RES_DIR/drawable-xxhdpi" "$RES_DIR/drawable-xxxhdpi"
 
-          # Android Vector Drawable (Pure White Transparent Cart + Lightning Silhouette)
           cat << 'EOF' > "$RES_DIR/drawable/ic_stat_chutki.xml"
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="24dp"
@@ -152,7 +152,6 @@ jobs:
           </vector>
           EOF
 
-          # SVG for high-res PNG generation
           cat << 'EOF' > /tmp/cart_icon.svg
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="96" height="96">
             <path fill="#ffffff" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/>
