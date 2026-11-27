@@ -82,7 +82,7 @@ export function usePushNotifications(
 
   const showNativeNotification = useCallback(
     async (notif: AppNotification) => {
-      // 1. Android APK Native Notification (Phone ke status bar me ring karega)
+      // 1. Android APK Native Notification with Custom Chutki Cart Icon
       if (isNativeApp()) {
         try {
           const { LocalNotifications } = await import('@capacitor/local-notifications');
@@ -92,13 +92,16 @@ export function usePushNotifications(
                 id: Math.floor(Math.random() * 100000),
                 title: notif.title,
                 body: notif.body,
+                smallIcon: 'ic_stat_chutki',
+                iconColor: '#0c831f',
+                largeIcon: 'ic_launcher_round',
                 schedule: { at: new Date(Date.now() + 100) },
               },
             ],
           });
           return;
         } catch {
-          // Fallback to web notification below
+          // Fallback
         }
       }
 
@@ -324,67 +327,11 @@ export function usePushNotifications(
     return { granted: true, message: '🔔 Test notification sent!' };
   }, [enablePushNotifications, permission, pushNotification]);
 
-  // Listen for FCM foreground messages & SW notification clicks
-  useEffect(() => {
-    let unsubscribeFcm: (() => void) | undefined;
-    let isMounted = true;
-
-    void getFirebaseMessagingSafe().then((messaging) => {
-      if (!messaging || !isMounted) return;
-      unsubscribeFcm = onMessage(messaging, (payload) => {
-        const title = payload.notification?.title || 'Chutki';
-        const body = payload.notification?.body || 'You have a new update.';
-        const targetTab =
-          (payload.data?.targetTab as TabKey | undefined) || 'orders';
-        pushNotification(
-          {
-            id: `fcm_${Date.now()}`,
-            title,
-            body,
-            tag: 'gb-fcm-msg',
-            type: 'ORDER',
-            targetTab,
-            createdAt: Date.now(),
-            read: false,
-          },
-          true
-        );
-      });
-    });
-
-    const handleSwMessage = (event: MessageEvent) => {
-      const data = event.data as { type?: string; tab?: TabKey } | undefined;
-      if (data?.type === 'NAVIGATE_TAB' && data.tab && onNavigateTab) {
-        onNavigateTab(data.tab);
-      }
-    };
-
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.addEventListener('message', handleSwMessage);
-    }
-
-    return () => {
-      isMounted = false;
-      if (unsubscribeFcm) unsubscribeFcm();
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
-      }
-    };
-  }, [onNavigateTab, pushNotification]);
-
-  useEffect(() => {
-    if (permission === 'granted' && userUid) {
-      void syncFcmToken();
-    }
-  }, [permission, userUid, syncFcmToken]);
-
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
   return {
     permission,
     fcmToken,
     notifications,
-    unreadCount,
+    unreadCount: notifications.filter((n) => !n.read).length,
     activeBanner,
     promptDismissed,
     enablePushNotifications,
