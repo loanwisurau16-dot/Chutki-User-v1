@@ -27,11 +27,28 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # Maven Central 429 Too Many Requests se bachne ke liye Google Mirror configure karein
+      - name: Configure Gradle Maven Mirror
+        run: |
+          mkdir -p ~/.gradle
+          cat << 'EOF' > ~/.gradle/init.gradle
+          allprojects {
+              buildscript {
+                  repositories {
+                      maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+                  }
+              }
+              repositories {
+                  maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+              }
+          }
+          EOF
+
       - name: Install Node Dependencies
         run: |
           npm install --legacy-peer-deps
 
-      - name: Install Capacitor Plugins (Google Auth, GPS, Notifications & Voice)
+      - name: Install Capacitor Plugins
         run: |
           npm install @capacitor/core@^6.2.0 @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0 \
             @codetrix-studio/capacitor-google-auth@^3.3.6 \
@@ -68,7 +85,7 @@ jobs:
           npx cap add android
           npx cap sync android
 
-      - name: Add Android Native Permissions (GPS, Notifications, Microphone)
+      - name: Add Android Native Permissions (GPS, Notification, Microphone)
         run: |
           sed -i '/<application/i \    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-feature android:name="android.hardware.location.gps" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />' android/app/src/main/AndroidManifest.xml
 
