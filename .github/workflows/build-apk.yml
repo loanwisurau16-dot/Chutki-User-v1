@@ -86,50 +86,49 @@ jobs:
           npx cap sync android
 
       # =========================================================================
-      # CHUTKI LOGO KO ANDROID APP ICON (MIPMAPS) ME AUTOMATICALLY CONVERT KAREIN
+      # PERFECT SAFE-ZONE ANDROID APP ICON GENERATION (Zero Cropping / No Cut)
       # =========================================================================
-      - name: Set Chutki App Logo Icons
+      - name: Set Chutki App Logo Icons (Safe-Zone Adjusted)
         run: |
-          # ImageMagick install karein taaki 'convert' command chal sake
           sudo apt-get update -y && sudo apt-get install -y imagemagick
 
           SRC_ICON="public/assets/aistudio/IMG-20261115-WA0008_6f19703a.jpg"
           if [ ! -f "$SRC_ICON" ]; then
             SRC_ICON="public/pwa-512x512.png"
           fi
-          echo "Setting Chutki App Icon from: $SRC_ICON"
+          echo "Generating centered Safe-Zone App Icon from: $SRC_ICON"
 
           RES_DIR="android/app/src/main/res"
 
-          # mdpi (48x48, foreground 108x108)
-          convert "$SRC_ICON" -resize 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher.png"
-          convert "$SRC_ICON" -resize 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher_round.png"
-          convert "$SRC_ICON" -resize 108x108 "$RES_DIR/mipmap-mdpi/ic_launcher_foreground.png"
+          # mdpi (foreground canvas 108x108 with 72x72 safe-zone logo)
+          convert "$SRC_ICON" -resize 72x72 -background '#0c831f' -gravity center -extent 108x108 "$RES_DIR/mipmap-mdpi/ic_launcher_foreground.png"
+          convert "$SRC_ICON" -resize 44x44 -background '#0c831f' -gravity center -extent 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 44x44 -background '#0c831f' -gravity center -extent 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher_round.png"
 
-          # hdpi (72x72, foreground 162x162)
-          convert "$SRC_ICON" -resize 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher.png"
-          convert "$SRC_ICON" -resize 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher_round.png"
-          convert "$SRC_ICON" -resize 162x162 "$RES_DIR/mipmap-hdpi/ic_launcher_foreground.png"
+          # hdpi (foreground canvas 162x162 with 108x108 safe-zone logo)
+          convert "$SRC_ICON" -resize 108x108 -background '#0c831f' -gravity center -extent 162x162 "$RES_DIR/mipmap-hdpi/ic_launcher_foreground.png"
+          convert "$SRC_ICON" -resize 66x66   -background '#0c831f' -gravity center -extent 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 66x66   -background '#0c831f' -gravity center -extent 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher_round.png"
 
-          # xhdpi (96x96, foreground 216x216)
-          convert "$SRC_ICON" -resize 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher.png"
-          convert "$SRC_ICON" -resize 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher_round.png"
-          convert "$SRC_ICON" -resize 216x216 "$RES_DIR/mipmap-xhdpi/ic_launcher_foreground.png"
+          # xhdpi (foreground canvas 216x216 with 144x144 safe-zone logo)
+          convert "$SRC_ICON" -resize 144x144 -background '#0c831f' -gravity center -extent 216x216 "$RES_DIR/mipmap-xhdpi/ic_launcher_foreground.png"
+          convert "$SRC_ICON" -resize 88x88   -background '#0c831f' -gravity center -extent 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 88x88   -background '#0c831f' -gravity center -extent 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher_round.png"
 
-          # xxhdpi (144x144, foreground 324x324)
-          convert "$SRC_ICON" -resize 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher.png"
-          convert "$SRC_ICON" -resize 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher_round.png"
-          convert "$SRC_ICON" -resize 324x324 "$RES_DIR/mipmap-xxhdpi/ic_launcher_foreground.png"
+          # xxhdpi (foreground canvas 324x324 with 216x216 safe-zone logo)
+          convert "$SRC_ICON" -resize 216x216 -background '#0c831f' -gravity center -extent 324x324 "$RES_DIR/mipmap-xxhdpi/ic_launcher_foreground.png"
+          convert "$SRC_ICON" -resize 132x132 -background '#0c831f' -gravity center -extent 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 132x132 -background '#0c831f' -gravity center -extent 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher_round.png"
 
-          # xxxhdpi (192x192, foreground 432x432)
-          convert "$SRC_ICON" -resize 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher.png"
-          convert "$SRC_ICON" -resize 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_round.png"
-          convert "$SRC_ICON" -resize 432x432 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_foreground.png"
+          # xxxhdpi (foreground canvas 432x432 with 288x288 safe-zone logo)
+          convert "$SRC_ICON" -resize 288x288 -background '#0c831f' -gravity center -extent 432x432 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_foreground.png"
+          convert "$SRC_ICON" -resize 176x176 -background '#0c831f' -gravity center -extent 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher.png"
+          convert "$SRC_ICON" -resize 176x176 -background '#0c831f' -gravity center -extent 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_round.png"
 
           # Adaptive icon background color ko brand green karein
           sed -i 's/<color name="colorPrimary">.*<\/color>/<color name="colorPrimary">#0c831f<\/color>/' "$RES_DIR/values/colors.xml" || true
 
-          echo "✅ Chutki App Icon successfully applied to Android APK!"
+          echo "✅ Chutki App Icon centered and safe-zone adjusted perfectly!"
 
       - name: Add Android Native Permissions (GPS, Notification, Microphone)
         run: |
