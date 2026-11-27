@@ -308,12 +308,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const handleGoogleSignIn = async () => {
     setAuthError('');
     triggerHaptic('tap');
-    setIsSubmitting(true);
 
+    // Android APK (Capacitor WebView) detect karein
     const isNativeApk =
-      typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
-      Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+      (typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
+        Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())) ||
+      window.location.protocol === 'capacitor:' ||
+      window.location.hostname === 'localhost';
 
+    // Android APK me Google Web Popup Android security ki wajah se Chrome par blank reh jata hai
+    if (isNativeApk) {
+      triggerHaptic('warning');
+      setAuthError(
+        '⚠️ APK ke andar Google Web popup block hota hai. Kripya upar "Create Account" ya "Sign In" par tap karke Email & Password se login karein (Yeh turant login ho jayega!).'
+      );
+      showToast('Kripya Email & Password se Sign In karein', 'info');
+      return;
+    }
+
+    setIsSubmitting(true);
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {
@@ -368,9 +381,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
       if (errStr.includes('google-auth-timeout')) {
         setAuthError(
-          isNativeApk
-            ? 'APK me Google popup timeout ho gaya. Kripya upar "Sign In" ya "Create Account" se Email & Password use karein.'
-            : 'Google login respond nahi kar raha. Firebase Console me Google Provider enable karein ya Email se login karein.'
+          'Google login respond nahi kar raha. Kripya upar Email & Password se login karein.'
         );
       } else if (errStr.includes('popup-closed')) {
         setAuthError('Google sign-in popup band kar diya gaya tha.');
