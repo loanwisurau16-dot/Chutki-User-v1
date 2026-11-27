@@ -3,7 +3,6 @@ import { ref, update } from 'firebase/database';
 import { getToken, onMessage } from 'firebase/messaging';
 import { db, getFirebaseMessagingSafe } from '../firebase';
 import type { AppNotification, TabKey } from '../types/bazar';
-
 import { prune30DayExpiredNotifications } from '../utils/dataRetention';
 
 const INBOX_STORAGE_KEY = 'gb_push_inbox_v1';
@@ -24,16 +23,21 @@ function loadSavedInbox(): AppNotification[] {
 
 export type PushPermissionState = NotificationPermission | 'unsupported';
 
+const isNativeApp = (): boolean =>
+  typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
+  Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+
 export function usePushNotifications(
   userUid: string | null,
   onNavigateTab?: (tab: TabKey) => void
 ) {
   const [permission, setPermission] = useState<PushPermissionState>(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      return 'unsupported';
-    }
+    if (typeof window === 'undefined') return 'unsupported';
+    if (isNativeApp()) return 'default';
+    if (!('Notification' in window)) return 'unsupported';
     return Notification.permission;
   });
+
   const [notifications, setNotifications] = useState<AppNotification[]>(loadSavedInbox);
   const [promptDismissed, setPromptDismissed] = useState<boolean>(() => {
     try {
@@ -52,17 +56,53 @@ export function usePushNotifications(
     };
   }, []);
 
+  // Native Android permissions check on mount
+  useEffect(() => {
+    if (isNativeApp()) {
+      void import('@capacitor/local-notifications').then(({ LocalNotifications }) => {
+        LocalNotifications.checkPermissions()
+          .then((status) => {
+            if (status.display === 'granted') {
+              setPermission('granted');
+            }
+          })
+          .catch(() => {});
+      });
+    }
+  }, []);
+
   const persistInbox = useCallback((items: AppNotification[]) => {
     try {
       const { retainedNotifications } = prune30DayExpiredNotifications(items);
       localStorage.setItem(INBOX_STORAGE_KEY, JSON.stringify(retainedNotifications.slice(0, 40)));
     } catch {
-      // Ignore storage quota errors
+      // Ignore storage quota
     }
   }, []);
 
   const showNativeNotification = useCallback(
     async (notif: AppNotification) => {
+      // 1. Android APK Native Notification (Phone ke status bar me ring karega)
+      if (isNativeApp()) {
+        try {
+          const { LocalNotifications } = await import('@capacitor/local-notifications');
+          await LocalNotifications.schedule({
+            notifications: [
+              {
+                id: Math.floor(Math.random() * 100000),
+                title: notif.title,
+                body: notif.body,
+                schedule: { at: new Date(Date.now() + 100) },
+              },
+            ],
+          });
+          return;
+        } catch {
+          // Fallback to web notification below
+        }
+      }
+
+      // 2. Web Browser Notification
       if (typeof window === 'undefined' || !('Notification' in window)) return;
       if (Notification.permission !== 'granted') return;
 
@@ -89,7 +129,7 @@ export function usePushNotifications(
           tag: notif.tag,
         });
       } catch {
-        // Fallback silently if browser restricts notification constructor
+        // Fallback
       }
     },
     []
@@ -183,7 +223,6 @@ export function usePushNotifications(
         });
       }
     } catch {
-      // VAPID key may not be configured; local SW push notifications still operate cleanly
       if (userUid) {
         void update(ref(db, `customers/${userUid}`), { pushEnabled: true }).catch(() => {});
       }
@@ -194,6 +233,34 @@ export function usePushNotifications(
     granted: boolean;
     message: string;
   }> => {
+    // 1. Android APK Native Notification Permission
+    if (isNativeApp()) {
+      try {
+        const { LocalNotifications } = await import('@capacitor/local-notifications');
+        const req = await LocalNotifications.requestPermissions();
+        if (req.display === 'granted') {
+          setPermission('granted');
+          dismissPrompt();
+          const welcomeNotif: AppNotification = {
+            id: `welcome_${Date.now()}`,
+            title: '🔔 Chutki Alerts Active!',
+            body: 'Aapko live order status, rider delivery PIN aur offers ke alerts milenge.',
+            tag: 'gb-welcome-push',
+            type: 'SYSTEM',
+            targetTab: 'home',
+            createdAt: Date.now(),
+            read: false,
+          };
+          pushNotification(welcomeNotif, true);
+          return { granted: true, message: '🔔 Push notifications enabled!' };
+        }
+        return { granted: false, message: 'Notification permission denied in phone settings.' };
+      } catch (err) {
+        return { granted: false, message: err instanceof Error ? err.message : 'Permission failed' };
+      }
+    }
+
+    // 2. Web Browser Permission
     if (typeof window === 'undefined' || !('Notification' in window)) {
       setPermission('unsupported');
       return {
@@ -246,7 +313,7 @@ export function usePushNotifications(
     const testNotif: AppNotification = {
       id: `test_${Date.now()}`,
       title: '⚡ 15-Min Express Order Alert',
-      body: 'Push notifications are working smoothly! Rider & offer updates will arrive here.',
+      body: 'Notifications working smoothly! Rider updates will arrive here.',
       tag: `gb-test-${Date.now()}`,
       type: 'ORDER',
       targetTab: 'orders',
@@ -254,7 +321,7 @@ export function usePushNotifications(
       read: false,
     };
     pushNotification(testNotif, true);
-    return { granted: true, message: '🔔 Test push notification sent!' };
+    return { granted: true, message: '🔔 Test notification sent!' };
   }, [enablePushNotifications, permission, pushNotification]);
 
   // Listen for FCM foreground messages & SW notification clicks
