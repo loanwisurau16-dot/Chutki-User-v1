@@ -489,7 +489,7 @@ export default function App() {
     }
   }, [categories, currentCategoryFilter]);
 
-  // Apply CMS Theme CSS variables
+  // Apply Theme
   useEffect(() => {
     const root = document.documentElement;
     if (settings.themePrimaryColor) {
@@ -652,7 +652,9 @@ export default function App() {
     };
   }, [currentUser, needsEmailVerification]);
 
-  // Native Android Geolocation Helper (Prompts system dialog on phone)
+  // =========================================================================
+  // NATIVE ANDROID GEOLOCATION HELPER (Solves "User denied Geolocation")
+  // =========================================================================
   const getCoordinatesSafe = async (): Promise<{ lat: number; lng: number }> => {
     const isNative =
       typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
@@ -663,7 +665,7 @@ export default function App() {
         const { Geolocation } = await import('@capacitor/geolocation');
         const perm = await Geolocation.requestPermissions();
         if (perm.location !== 'granted') {
-          throw new Error('Location permission denied. Phone Settings > Apps > Chutki me jakar Location allow karein.');
+          throw new Error('Location permission denied. Kripya Phone Settings > Apps > Chutki me jakar Location allow karein.');
         }
         const pos = await Geolocation.getCurrentPosition({
           enableHighAccuracy: true,
@@ -778,33 +780,24 @@ export default function App() {
             'Gossaigaon';
           newAddress = `${data.address.road ? data.address.road + ', ' : ''}${town}`;
         }
-        setCustomerProfile((prev) => ({
-          ...(prev || {}),
+      } catch {}
+      setCustomerProfile((prev) => ({
+        ...(prev || {}),
+        lat,
+        lng,
+        locationLink: link,
+        address: newAddress,
+      }));
+      if (currentUser) {
+        await update(ref(db, `customers/${currentUser.uid}`), {
           lat,
           lng,
           locationLink: link,
           address: newAddress,
-        }));
-        if (currentUser) {
-          await update(ref(db, `customers/${currentUser.uid}`), {
-            lat,
-            lng,
-            locationLink: link,
-            address: newAddress,
-            updatedAt: Date.now(),
-          });
-        }
-        showToast('📍 Exact Profile GPS Saved!', 'success');
-      } catch {
-        setCustomerProfile((prev) => ({
-          ...(prev || {}),
-          lat,
-          lng,
-          locationLink: link,
-          address: newAddress,
-        }));
-        showToast('📍 GPS Coordinates Pinned!', 'success');
+          updatedAt: Date.now(),
+        });
       }
+      showToast('📍 Exact Profile GPS Saved!', 'success');
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : 'GPS Error', 'danger');
     } finally {
@@ -847,7 +840,9 @@ export default function App() {
     []
   );
 
-  // Voice Search (Native Microphone in APK + Web fallback)
+  // =========================================================================
+  // NATIVE ANDROID VOICE SEARCH (Inside APK + Web Fallback)
+  // =========================================================================
   const startVoiceSearch = async () => {
     const isNative =
       typeof (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor !== 'undefined' &&
@@ -1834,7 +1829,7 @@ export default function App() {
           groupKey={cancelGroupKey}
           isSubmitting={isSubmittingAction}
           onClose={() => setCancelGroupKey(null)}
-          onConfirmCancel={(gk, r) => {
+          onConfirmCancel={() => {
             setCancelGroupKey(null);
             showToast('Order cancelled', 'info');
           }}
