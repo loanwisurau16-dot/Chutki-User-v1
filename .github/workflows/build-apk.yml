@@ -75,7 +75,7 @@ jobs:
                 "forceCodeForRefreshToken": true
               },
               "LocalNotifications": {
-                "smallIcon": "ic_launcher_round",
+                "smallIcon": "ic_stat_chutki",
                 "iconColor": "#0c831f",
                 "sound": "beep.wav"
               }
@@ -86,7 +86,7 @@ jobs:
           npx cap sync android
 
       # =========================================================================
-      # PERFECT SAFE-ZONE ANDROID APP ICON GENERATION (Zero Cropping / No Cut)
+      # 1. APP HOME-SCREEN ICON GENERATION (Safe-Zone Centered)
       # =========================================================================
       - name: Set Chutki App Logo Icons (Safe-Zone Adjusted)
         run: |
@@ -100,35 +100,73 @@ jobs:
 
           RES_DIR="android/app/src/main/res"
 
-          # mdpi (foreground canvas 108x108 with 72x72 safe-zone logo)
+          # mdpi
           convert "$SRC_ICON" -resize 72x72 -background '#0c831f' -gravity center -extent 108x108 "$RES_DIR/mipmap-mdpi/ic_launcher_foreground.png"
           convert "$SRC_ICON" -resize 44x44 -background '#0c831f' -gravity center -extent 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher.png"
           convert "$SRC_ICON" -resize 44x44 -background '#0c831f' -gravity center -extent 48x48   "$RES_DIR/mipmap-mdpi/ic_launcher_round.png"
 
-          # hdpi (foreground canvas 162x162 with 108x108 safe-zone logo)
+          # hdpi
           convert "$SRC_ICON" -resize 108x108 -background '#0c831f' -gravity center -extent 162x162 "$RES_DIR/mipmap-hdpi/ic_launcher_foreground.png"
           convert "$SRC_ICON" -resize 66x66   -background '#0c831f' -gravity center -extent 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher.png"
           convert "$SRC_ICON" -resize 66x66   -background '#0c831f' -gravity center -extent 72x72   "$RES_DIR/mipmap-hdpi/ic_launcher_round.png"
 
-          # xhdpi (foreground canvas 216x216 with 144x144 safe-zone logo)
+          # xhdpi
           convert "$SRC_ICON" -resize 144x144 -background '#0c831f' -gravity center -extent 216x216 "$RES_DIR/mipmap-xhdpi/ic_launcher_foreground.png"
           convert "$SRC_ICON" -resize 88x88   -background '#0c831f' -gravity center -extent 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher.png"
           convert "$SRC_ICON" -resize 88x88   -background '#0c831f' -gravity center -extent 96x96   "$RES_DIR/mipmap-xhdpi/ic_launcher_round.png"
 
-          # xxhdpi (foreground canvas 324x324 with 216x216 safe-zone logo)
+          # xxhdpi
           convert "$SRC_ICON" -resize 216x216 -background '#0c831f' -gravity center -extent 324x324 "$RES_DIR/mipmap-xxhdpi/ic_launcher_foreground.png"
           convert "$SRC_ICON" -resize 132x132 -background '#0c831f' -gravity center -extent 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher.png"
           convert "$SRC_ICON" -resize 132x132 -background '#0c831f' -gravity center -extent 144x144 "$RES_DIR/mipmap-xxhdpi/ic_launcher_round.png"
 
-          # xxxhdpi (foreground canvas 432x432 with 288x288 safe-zone logo)
+          # xxxhdpi
           convert "$SRC_ICON" -resize 288x288 -background '#0c831f' -gravity center -extent 432x432 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_foreground.png"
           convert "$SRC_ICON" -resize 176x176 -background '#0c831f' -gravity center -extent 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher.png"
           convert "$SRC_ICON" -resize 176x176 -background '#0c831f' -gravity center -extent 192x192 "$RES_DIR/mipmap-xxxhdpi/ic_launcher_round.png"
 
-          # Adaptive icon background color ko brand green karein
+          # Background green
           sed -i 's/<color name="colorPrimary">.*<\/color>/<color name="colorPrimary">#0c831f<\/color>/' "$RES_DIR/values/colors.xml" || true
 
-          echo "✅ Chutki App Icon centered and safe-zone adjusted perfectly!"
+      # =========================================================================
+      # 2. CHUTKI NOTIFICATION MONOCHROME STATUS BAR ICON (Replaces '(i)' fallback)
+      # =========================================================================
+      - name: Generate Chutki Notification Icon
+        run: |
+          RES_DIR="android/app/src/main/res"
+          mkdir -p "$RES_DIR/drawable" "$RES_DIR/drawable-mdpi" "$RES_DIR/drawable-hdpi" "$RES_DIR/drawable-xhdpi" "$RES_DIR/drawable-xxhdpi" "$RES_DIR/drawable-xxxhdpi"
+
+          # Android Vector Drawable (Pure White Transparent Cart + Lightning Silhouette)
+          cat << 'EOF' > "$RES_DIR/drawable/ic_stat_chutki.xml"
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#FFFFFFFF"
+                  android:pathData="M7,18c-1.1,0 -1.99,0.9 -1.99,2S5.9,22 7,22s2,-0.9 2,-2 -0.9,-2 -2,-2zM1,2v2h2l3.6,7.59 -1.35,2.45c-0.16,0.28 -0.25,0.61 -0.25,0.96 0,1.1 0.9,2 2,2h12v-2H7.42c-0.14,0 -0.25,-0.11 -0.25,-0.25l0.03,-0.12 0.9,-1.63h7.45c0.75,0 1.41,-0.41 1.75,-1.03l3.58,-6.49A1,1 0,0 0,20 6H5.21l-0.94,-2H1zm16,16c-1.1,0 -1.99,0.9 -1.99,2s0.89,2 1.99,2 2,-0.9 2,-2 -0.9,-2 -2,-2z"/>
+              <path
+                  android:fillColor="#FFFFFFFF"
+                  android:pathData="M15,2l-4.5,6h3l-1.5,5 5,-6.5h-3z"/>
+          </vector>
+          EOF
+
+          # SVG for high-res PNG generation
+          cat << 'EOF' > /tmp/cart_icon.svg
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="96" height="96">
+            <path fill="#ffffff" d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/>
+            <path fill="#ffffff" d="M15 2l-4.5 6h3l-1.5 5 5-6.5h-3z"/>
+          </svg>
+          EOF
+
+          convert -background transparent /tmp/cart_icon.svg -resize 24x24   "$RES_DIR/drawable-mdpi/ic_stat_chutki.png"
+          convert -background transparent /tmp/cart_icon.svg -resize 36x36   "$RES_DIR/drawable-hdpi/ic_stat_chutki.png"
+          convert -background transparent /tmp/cart_icon.svg -resize 48x48   "$RES_DIR/drawable-xhdpi/ic_stat_chutki.png"
+          convert -background transparent /tmp/cart_icon.svg -resize 72x72   "$RES_DIR/drawable-xxhdpi/ic_stat_chutki.png"
+          convert -background transparent /tmp/cart_icon.svg -resize 96x96   "$RES_DIR/drawable-xxxhdpi/ic_stat_chutki.png"
+
+          echo "✅ Chutki Notification Icon generated successfully!"
 
       - name: Add Android Native Permissions (GPS, Notification, Microphone)
         run: |
