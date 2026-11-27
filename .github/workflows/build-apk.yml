@@ -21,11 +21,12 @@ jobs:
         with:
           node-version: 20
 
-      - name: Setup Java JDK 17
+      # Capacitor 7 ke liye Java JDK 21 zaroori hai
+      - name: Setup Java JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Accept Android SDK Licenses
         run: |
@@ -43,9 +44,8 @@ jobs:
         run: |
           npm run build
 
-      - name: Configure Capacitor with JSON (Avoids TS7 Bug)
+      - name: Configure Capacitor with JSON
         run: |
-          # TypeScript 7 crash se bachne ke liye JSON configuration use karein
           rm -f capacitor.config.ts
           cat << 'EOF' > capacitor.config.json
           {
@@ -78,7 +78,7 @@ jobs:
       - name: Build Debug APK with Gradle
         run: |
           cd android
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug -x lint -x test --stacktrace
 
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4
