@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - master
-  workflow_dispatch: # GitHub website se manually 'Run workflow' click karne ke liye
+  workflow_dispatch:
 
 jobs:
   build:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          # cache: 'npm' hata diya gaya hai taaki lockfile missing error na aaye
 
       - name: 📦 Install Node Dependencies
         run: npm install --legacy-peer-deps
@@ -53,7 +53,6 @@ jobs:
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
-            # Insert required permissions if not already present
             sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />' $MANIFEST
             echo "✅ Android permissions injected!"
           fi
