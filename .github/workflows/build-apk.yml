@@ -16,17 +16,16 @@ jobs:
       - name: 📥 Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: ☕ Setup Java 17 (JDK)
+      - name: ☕ Setup Java 21 (JDK 21 for Capacitor 7)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: 🟢 Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # cache: 'npm' hata diya gaya hai taaki lockfile missing error na aaye
 
       - name: 📦 Install Node Dependencies
         run: npm install --legacy-peer-deps
@@ -34,35 +33,48 @@ jobs:
       - name: 🏗️ Build Web Assets (Vite)
         run: npm run build
 
-      - name: ⚡ Setup Capacitor Android Platform
+      - name: ⚡ Initialize Capacitor Android
         run: |
           if [ ! -d "android" ]; then
             npx cap add android
           fi
           npx cap sync android
 
-      - name: 📋 Copy Firebase google-services.json
+      - name: 📋 Copy Firebase Config
         run: |
           if [ -f "public/assets/aistudio/google-services_5c61c5de.json" ]; then
             mkdir -p android/app
             cp public/assets/aistudio/google-services_5c61c5de.json android/app/google-services.json
-            echo "✅ Firebase configuration copied!"
+            echo "Firebase google-services.json linked successfully."
           fi
 
-      - name: 📍 Configure Android Permissions (GPS, Internet, Notifications)
+      - name: 📍 Configure Safe Android Permissions
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />' $MANIFEST
-            echo "✅ Android permissions injected!"
-          fi
+          node -e '
+            const fs = require("fs");
+            const file = "android/app/src/main/AndroidManifest.xml";
+            if (fs.existsSync(file)) {
+              let xml = fs.readFileSync(file, "utf8");
+              const perms = [
+                "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />",
+                "<uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />",
+                "<uses-permission android:name=\"android.permission.VIBRATE\" />",
+                "<uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />"
+              ].join("\n    ");
+              if (!xml.includes("ACCESS_FINE_LOCATION")) {
+                xml = xml.replace("<application", perms + "\n    <application");
+                fs.writeFileSync(file, xml, "utf8");
+                console.log("Permissions added safely.");
+              }
+            }
+          '
 
       - name: 🔧 Make Gradle Executable
         run: chmod +x android/gradlew
 
       - name: 🔨 Compile Android Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: 📤 Upload Downloadable APK
         uses: actions/upload-artifact@v4
